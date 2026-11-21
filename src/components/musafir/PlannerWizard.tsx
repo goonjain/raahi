@@ -1,10 +1,12 @@
 // PlannerWizard.tsx – Premium four‑step itinerary questionnaire
 import React, { useState } from "react";
-import VibeCard from "./VibeCard";
+import { buildRequest } from '@/lib/itinerary-request';
+import type { ItineraryRequest } from '@/lib/itinerary-request';
 import { TripPreferences } from "./TripPreferences";
 import { PLACES } from "@/lib/jaipur-data"; // for must‑visit options
 import { Calendar, Heart, Users, Compass, ArrowRight, CheckCircle, Circle } from "lucide-react"; // icons
 import JaipurPhotoSlideshow from "./JaipurPhotoSlideshow";
+import VibeCard from "./VibeCard";
 export type Plan = {
   day: string;
   time: "half" | "full";
@@ -59,7 +61,8 @@ const foodPrefs = [
 ];
 
 // ---- Main component ------------------------------------------------
-export default function PlannerWizard({ plan, setPlan, onGenerate }: { plan: Plan; setPlan: (p: Plan) => void; onGenerate: () => void }) {
+type PlannerWizardProps = { plan: Plan; setPlan: (p: Plan) => void; onGenerate: () => void; onGenerateRequest?: (req: ItineraryRequest) => void };
+export default function PlannerWizard({ plan, setPlan, onGenerate, onGenerateRequest }: PlannerWizardProps) {
   const [step, setStep] = useState(1);
   const totalSteps = 4;
   const [submitting, setSubmitting] = useState(false);
@@ -128,11 +131,14 @@ export default function PlannerWizard({ plan, setPlan, onGenerate }: { plan: Pla
 
   const finalize = () => {
     setSubmitting(true);
+    // Build the itinerary request from current plan and preferences
+    const request = buildRequest({ ...plan, crowd: crowdPref }, { ...preferences, crowdTolerance: crowdPref as TripPreferences["crowdTolerance"] });
+    // Forward request to parent if callback provided
+    if (onGenerateRequest) onGenerateRequest(request);
     setPlan({ ...plan, crowd: crowdPref, must: plan.must });
     onGenerate();
     setTimeout(() => setSubmitting(false), 500);
   };
-
   // ---- Progress bar -------------------------------------------------
   const renderProgress = () => {
     const icons = [Calendar, Heart, Users, Compass];

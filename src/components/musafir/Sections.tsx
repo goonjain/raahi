@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState, useRef } from "react";
-import { api, type DestinationItem, type TravelPost, type PostComment } from "@/lib/api";
+import { ItineraryRequest } from '@/lib/itinerary-request';
+import {
+  api,
+  type DestinationItem,
+  type TravelPost,
+} from "@/lib/api";
 import {
   PLACES,
   byId,
@@ -109,9 +114,10 @@ export type Plan = {
   must: string;
 };
 
-export function Planner({ plan, setPlan, onGenerate }: { plan: Plan; setPlan: (p: Plan) => void; onGenerate: () => void }) {
-  return <PlannerWizard plan={plan} setPlan={setPlan} onGenerate={onGenerate} />;
+export function Planner({ plan, setPlan, onGenerate, onGenerateRequest }: { plan: Plan; setPlan: (p: Plan) => void; onGenerate: () => void; onGenerateRequest?: (req: ItineraryRequest) => void }) {
+  return <PlannerWizard plan={plan} setPlan={setPlan} onGenerate={onGenerate} onGenerateRequest={onGenerateRequest} />;
 }
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -209,7 +215,7 @@ export function buildSmart(plan: Plan): Stop[] {
     },
     { time: "5:30 PM", hour: 17, id: "jalmahal", note: "Sunset promenade viewpoint" },
   ];
-  const sliced = plan.time === "half" ? raw.slice(0, 3) : raw;
+  const sliced = plan.time === "half" ? s.slice(0, 3) : s;
   const resolved = sliced.map((s) => resolveStop(s, plan.stopReplacements));
 
   // If there are replacements for hotspots not present in sliced stops, include them

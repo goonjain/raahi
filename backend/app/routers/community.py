@@ -114,7 +114,7 @@ def submit_crowd_report(
         observed_at=observed_time,
         submitted_at=now,
         forecast_score_at_report=baseline_score,
-        moderation_status="pending",
+        moderation_status=mod_status,
         trust_weight=1.0,
         image=payload.image,
     )

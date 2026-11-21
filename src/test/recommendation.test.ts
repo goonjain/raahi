@@ -77,7 +77,14 @@ describe("Reason Synthesis", () => {
 
   it("falls back to factual description from candidate place when not specifically mapped", () => {
     const dummyHotspot = { ...byId("amber"), id: "custom_hotspot" };
-    const gatore = byId("gatore");
+    const gatore = {
+  ...byId("amber"),
+  id: "gatore",
+  name: "Gatore",
+  hindi: "गटोर",
+  tags: ["heritage"],
+  update: "carved white marble royal cenotaphs",
+};
     const reason = synthesizeRecommendationReason(gatore, dummyHotspot, 2.5, ["heritage"]);
 
     expect(reason).toContain("quieter-feeling heritage alternative");

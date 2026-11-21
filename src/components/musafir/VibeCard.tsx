@@ -1,4 +1,5 @@
 import React from "react";
+import { VibeCard } from "./VibeCard";
 
 interface VibeCardProps {
   id: string;

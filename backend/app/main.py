@@ -7,7 +7,7 @@ from sqlalchemy import text
 from backend.app.config import settings
 from backend.app.database import engine, Base, SessionLocal
 from backend.app.models import Destination, User
-from backend.app.routers import community, rewards, gems, admin, legacy_compat, social
+from backend.app.routers import community, rewards, gems, admin, legacy_compat, social, knowledge
 
 CANONICAL_DESTINATIONS = [
     {"id": "amber", "name": "Amber Fort", "hindi": "आमेर किला", "tags": ["heritage", "photography"], "base_crowd": 62, "cost": 200, "is_gem": False, "alternatives": ["jaigarh", "panna", "jagat_shiromani", "gatore"], "capacity": 1800, "sensitivity": "normal"},
@@ -95,6 +95,7 @@ app.include_router(rewards.router)
 app.include_router(gems.router)
 app.include_router(admin.router)
 app.include_router(legacy_compat.router)
+app.include_router(knowledge.router)
 
 if __name__ == "__main__":
     import uvicorn

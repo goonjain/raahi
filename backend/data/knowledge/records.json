@@ -1,0 +1,34 @@
+[
+  {
+    "attractionId": "amber",
+    "name": "Amber Fort",
+    "description": "A majestic fort located on a hilltop offering stunning views of Jaipur and rich Mughal architecture.",
+    "interests": ["heritage", "photography", "history"],
+    "geo": {"lat": 26.9855, "lng": 75.8505},
+    "openingHours": "09:00-17:00",
+    "ticketPrice": 200,
+    "accessibility": "partial",
+    "restrictions": null,
+    "visitDuration": "3h",
+    "sourceTitle": "Official Amber Fort Tourism Site",
+    "sourceUrl": "https://amberfort.jaipur.gov.in",
+    "retrievedAt": "2026-11-20T00:00:00",
+    "verificationStatus": "verified"
+  },
+  {
+    "attractionId": "hawa",
+    "name": "Hawa Mahal",
+    "description": "The Palace of Winds features a unique façade with 953 small windows designed for royal women to observe street life.",
+    "interests": ["heritage", "photography", "architecture"],
+    "geo": {"lat": 26.9239, "lng": 75.8267},
+    "openingHours": "09:00-17:00",
+    "ticketPrice": 50,
+    "accessibility": "yes",
+    "restrictions": null,
+    "visitDuration": "1h",
+    "sourceTitle": "Jaipur Tourism Board",
+    "sourceUrl": "https://jaipurtourism.gov.in/hawa-mahal",
+    "retrievedAt": "2026-11-20T00:00:00",
+    "verificationStatus": "verified"
+  }
+]

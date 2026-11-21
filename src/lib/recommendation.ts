@@ -132,7 +132,7 @@ const SPECIFIC_REASONS: Record<string, Record<string, string>> = {
     jaigarh: "A quieter hilltop fort alternative above Amer, featuring spacious battlements and the historic Jaivana cannon without the tourist rush.",
     panna: "A peaceful 16th-century stepwell just minutes from Amer Fort, featuring striking symmetrical geometric stairs.",
     jagat_shiromani: "A serene 16th-century carved stone temple and courtyard right beside Amer Fort, free from tour group crowds.",
-    gatore: "A tranquil heritage alternative featuring intricately carved white marble royal cenotaphs beneath the Nahargarh hills.",
+    gatore:"A quieter-feeling heritage alternative featuring carved white marble royal cenotaphs beneath the Nahargarh hills.",
   },
   nahargarh: {
     jaigarh: "A quieter hilltop fort alternative featuring spacious ridge ramparts and panoramic views without the Padao sunset crush.",

@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import hero from "@/assets/hero-jaipur.jpg";
+import { api, type DestinationItem } from "@/lib/api";
 import {
   SectionTitle,
   Planner,
@@ -15,7 +16,9 @@ import {
 } from "@/components/musafir/Sections";
 import { byId } from "@/lib/jaipur-data";
 import { applyStopReplacement, removeStopReplacement } from "@/lib/recommendation";
-import { api, type DestinationItem } from "@/lib/api";
+import { generateItinerary, optimizeDayStops } from "@/lib/itinerary-planner";
+import type { ItineraryRequest } from "@/lib/itinerary-request";
+import MultiDayItinerary from "@/components/musafir/MultiDayItinerary";
 import { observationsRepository, type CrowdReportRecord } from "@/lib/observations-repository";
 import type { VerifiedObservation } from "@/lib/crowd-service";
 import { BellRing } from "lucide-react";
@@ -75,6 +78,7 @@ function Index() {
   });
   const [shown, setShown] = useState(false);
   const [optimized, setOptimized] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Rewards balance: initialized from local persistent store, synced with backend
   const [points, setPoints] = useState<number>(
@@ -102,7 +106,35 @@ function Index() {
     observationsRepository.getActiveBroadcast(),
   );
 
-  const [toast, setToast] = useState<string | null>(null);
+  // State for multi‑day itinerary
+  const [itineraryByDay, setItineraryByDay] = useState<Record<string, string[]> | null>(null);
+  const [itineraryRequest, setItineraryRequest] = useState<ItineraryRequest | null>(null);
+  const [optimizationFeedback, setOptimizationFeedback] = useState<Record<string, string>>({});
+
+  // Callback from PlannerWizard with full request
+  const handleGenerateRequest = (req: ItineraryRequest) => {
+    const result = generateItinerary(req);
+    setItineraryByDay(result);
+    setItineraryRequest(req);
+    setOptimizationFeedback({});
+    // Show itinerary section
+    setShown(true);
+    setOptimized(false);
+    setTimeout(() => go("itinerary"), 50);
+  };
+
+
+  const handleOptimizeDay = (date: string) => {
+    const oldIds = itineraryByDay?.[date];
+    if (!oldIds) return;
+    const optimizedIds = optimizeDayStops(oldIds);
+    const changed = optimizedIds.join("|") !== oldIds.join("|");
+    if (changed) setItineraryByDay((previous) => previous ? { ...previous, [date]: optimizedIds } : previous);
+    setOptimizationFeedback((previous) => ({
+      ...previous,
+      [date]: changed ? "Stops reordered using approximate geographic proximity." : "This route is already as short as the available approximation can find.",
+    }));
+  };
 
   // Map focus and destination selection state
   const [selectedMapPlaceId, setSelectedMapPlaceId] = useState<string | null>(null);
@@ -408,17 +440,28 @@ function Index() {
               setOptimized(false);
               setTimeout(() => go("itinerary"), 50);
             }}
+            onGenerateRequest={handleGenerateRequest}
           />
           {shown && (
             <div id="itinerary" className="mt-14 scroll-mt-24">
-              <Itinerary
-                plan={plan}
-                optimized={optimized}
-                setOptimized={setOptimized}
-                observations={observations}
-                onReward={(n) => reward(n, "Smart Route unlocked · +80 Raahi points!")}
-                onResetReplacements={handleResetReplacements}
-              />
+              {itineraryByDay && itineraryRequest ? (
+                <MultiDayItinerary
+                  byDay={itineraryByDay}
+                  request={itineraryRequest}
+                  observations={observations}
+                  onOptimizeDay={handleOptimizeDay}
+                  feedback={optimizationFeedback}
+                />
+              ) : (
+                <Itinerary
+                  plan={plan}
+                  optimized={optimized}
+                  setOptimized={setOptimized}
+                  observations={observations}
+                  onReward={(n) => reward(n, "Smart Route unlocked · +80 Raahi points!")}
+                  onResetReplacements={handleResetReplacements}
+                />
+              )}
             </div>
           )}
         </section>
@@ -512,9 +555,7 @@ function Index() {
         <p className="mt-2 text-sm opacity-85">
           Jaipur Crowd-Aware Travel Platform · Built for Code Slayer 2.0 / Dev SphereIndia
         </p>
-        <p className="mt-1 text-xs opacity-65">
-          By Ashwajeet Sharma, Alice Sharma, Goon Jain & Paridhi Poddar
-        </p>
+        
         <p className="mt-3 text-[11px] opacity-50">
           Crowd intelligence powered by Raahi Baseline v1.0. Community observations verified by DoT
           Command Center.
