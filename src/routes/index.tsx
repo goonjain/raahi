@@ -110,17 +110,20 @@ function Index() {
   const [itineraryByDay, setItineraryByDay] = useState<Record<string, string[]> | null>(null);
   const [itineraryRequest, setItineraryRequest] = useState<ItineraryRequest | null>(null);
   const [optimizationFeedback, setOptimizationFeedback] = useState<Record<string, string>>({});
-
+  const [previousDayBeforeReplace, setPreviousDayBeforeReplace] =
+  useState<Record<string, string[]>>({});
   // Callback from PlannerWizard with full request
   const handleGenerateRequest = (req: ItineraryRequest) => {
     const result = generateItinerary(req);
     setItineraryByDay(result);
     setItineraryRequest(req);
     setOptimizationFeedback({});
+    setPreviousDayBeforeReplace({});
     // Show itinerary section
     setShown(true);
     setOptimized(false);
     setTimeout(() => go("itinerary"), 50);
+
   };
 
 
@@ -135,6 +138,61 @@ function Index() {
       [date]: changed ? "Stops reordered using approximate geographic proximity." : "This route is already as short as the available approximation can find.",
     }));
   };
+  const handleReplaceMultiDay = (
+  date: string,
+  hotspotId: string,
+  alternativeId: string
+) => {
+  const currentIds = itineraryByDay?.[date];
+  if (!currentIds) return;
+
+  const index = currentIds.indexOf(hotspotId);
+  if (index === -1 || currentIds.includes(alternativeId)) return;
+
+  // Remember the day before replacement.
+  setPreviousDayBeforeReplace((prev) => ({
+    ...prev,
+    [date]: [...currentIds],
+  }));
+
+  // Replace the attraction.
+  const updatedIds = [...currentIds];
+  updatedIds[index] = alternativeId;
+
+  // Reorder the updated stops geographically.
+  const optimizedIds = optimizeDayStops(updatedIds);
+
+  // Update only the affected day.
+  setItineraryByDay((prev) =>
+    prev ? { ...prev, [date]: optimizedIds } : prev
+  );
+
+  setOptimizationFeedback((prev) => ({
+    ...prev,
+    [date]:
+      "Attraction replaced and stop order recalculated using approximate geographic proximity.",
+  }));
+};
+
+const handleUndoMultiDay = (date: string) => {
+  const previousIds = previousDayBeforeReplace[date];
+  if (!previousIds) return;
+
+  setItineraryByDay((prev) =>
+    prev ? { ...prev, [date]: previousIds } : prev
+  );
+
+  setPreviousDayBeforeReplace((prev) => {
+    const next = { ...prev };
+    delete next[date];
+    return next;
+  });
+
+  setOptimizationFeedback((prev) => ({
+    ...prev,
+    [date]: "Previous itinerary restored.",
+  }));
+};
 
   // Map focus and destination selection state
   const [selectedMapPlaceId, setSelectedMapPlaceId] = useState<string | null>(null);
@@ -446,12 +504,17 @@ function Index() {
             <div id="itinerary" className="mt-14 scroll-mt-24">
               {itineraryByDay && itineraryRequest ? (
                 <MultiDayItinerary
-                  byDay={itineraryByDay}
-                  request={itineraryRequest}
-                  observations={observations}
-                  onOptimizeDay={handleOptimizeDay}
-                  feedback={optimizationFeedback}
-                />
+  byDay={itineraryByDay}
+  request={itineraryRequest}
+  observations={observations}
+  onOptimizeDay={handleOptimizeDay}
+  onReplace={handleReplaceMultiDay}
+  onUndo={handleUndoMultiDay}
+  canUndoByDay={Object.fromEntries(
+    Object.keys(previousDayBeforeReplace).map((date) => [date, true])
+  )}
+  feedback={optimizationFeedback}
+/>
               ) : (
                 <Itinerary
                   plan={plan}
@@ -552,9 +615,7 @@ function Index() {
       <footer className="bg-indigo-deep py-12 text-center text-primary-foreground border-t border-gold/30">
         <div className="border-bandhani mb-8" />
         <p className="font-display text-3xl text-gold font-bold">राही · Raahi</p>
-        <p className="mt-2 text-sm opacity-85">
-          Jaipur Crowd-Aware Travel Platform · Built for Code Slayer 2.0 / Dev SphereIndia
-        </p>
+      
         
         <p className="mt-3 text-[11px] opacity-50">
           Crowd intelligence powered by Raahi Baseline v1.0. Community observations verified by DoT
