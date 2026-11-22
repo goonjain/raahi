@@ -68,14 +68,29 @@ function computeAdjustments(reps: Report[]): Record<string, number> {
 
 function Index() {
   const [plan, setPlan] = useState<Plan>({
-    day: "Sun",
-    time: "full",
-    budget: 2000,
-    interests: ["heritage", "photography"],
-    type: "friends",
-    crowd: "avoid",
-    must: "amber",
-  });
+  day: "Sun",
+  time: "full",
+  budget: 2000,
+  interests: ["heritage", "photography"],
+  type: "friends",
+  crowd: "avoid",
+  must: "amber",
+});
+
+
+    const handleSelectFood = (date: string, restaurantId: string) => {
+    setFoodSelections((prev) => ({ ...prev, [date]: restaurantId }));
+  };
+
+  const handleRemoveFood = (date: string) => {
+    setFoodSelections((prev) => {
+      const next = { ...prev };
+      delete next[date];
+      return next;
+    });
+  };
+  const [foodSelections, setFoodSelections] = useState<Record<string, string | undefined>>({});
+
   const [shown, setShown] = useState(false);
   const [optimized, setOptimized] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -513,6 +528,9 @@ const handleUndoMultiDay = (date: string) => {
   canUndoByDay={Object.fromEntries(
     Object.keys(previousDayBeforeReplace).map((date) => [date, true])
   )}
+  foodSelections={foodSelections}
+onSelectFood={handleSelectFood}
+onRemoveFood={handleRemoveFood}
   feedback={optimizationFeedback}
 />
               ) : (

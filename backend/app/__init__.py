@@ -1,1 +1,1 @@
-# Musafir Backend Package
+# Backend app package
