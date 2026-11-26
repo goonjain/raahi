@@ -27,6 +27,39 @@ class KnowledgeRecord(BaseModel):
     sourceUrl: str
     retrievedAt: datetime.datetime
     verificationStatus: str
+    # New optional metadata – does not affect existing callers
+    category: Optional[str] = None
+    dietary: Optional[List[str]] = None
+
+    @validator("verificationStatus")
+    def _verify_status(cls, v):
+        if v not in {"verified", "unverified"}:
+            raise ValueError("verificationStatus must be 'verified' or 'unverified'")
+        return v
+
+    @validator("retrievedAt", pre=True)
+    def _parse_dt(cls, v):
+        if isinstance(v, str):
+            return datetime.datetime.fromisoformat(v)
+        return v
+
+    class Config:
+        allow_population_by_field_name = True
+        extra = "allow"
+    attractionId: str = Field(..., alias="attractionId")
+    name: str
+    description: str
+    interests: List[str]
+    geo: Dict[str, float]
+    openingHours: Optional[str] = None
+    ticketPrice: Optional[int] = None
+    accessibility: Optional[str] = None
+    restrictions: Optional[str] = None
+    visitDuration: Optional[str] = None
+    sourceTitle: str
+    sourceUrl: str
+    retrievedAt: datetime.datetime
+    verificationStatus: str
 
     @validator("verificationStatus")
     def _verify_status(cls, v):
@@ -44,11 +77,19 @@ class KnowledgeRecord(BaseModel):
         allow_population_by_field_name = True
 
 def _load_records() -> List[KnowledgeRecord]:
-    if not os.path.exists(RECORDS_PATH):
-        return []
-    with open(RECORDS_PATH, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-    return [KnowledgeRecord(**r) for r in raw]
+    records = []
+    # Load main attraction records
+    if os.path.exists(RECORDS_PATH):
+        with open(RECORDS_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        records.extend([KnowledgeRecord(**r) for r in raw])
+    # Load additional food knowledge records if present
+    FOOD_PATH = os.path.join(DATA_DIR, "food_records.json")
+    if os.path.exists(FOOD_PATH):
+        with open(FOOD_PATH, "r", encoding="utf-8") as f:
+            raw_food = json.load(f)
+        records.extend([KnowledgeRecord(**r) for r in raw_food])
+    return records
 
 def _save_records(records: List[KnowledgeRecord]) -> None:
     # Sort by attractionId for deterministic file order

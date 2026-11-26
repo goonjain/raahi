@@ -166,3 +166,97 @@ class TravelPostResponse(BaseModel):
     comments_count: int = 0
     comments: list[PostCommentResponse] = []
 
+from typing import Literal, Optional
+from pydantic import BaseModel, Field, field_validator
+
+
+class FoodProposal(BaseModel):
+    venue_id: Optional[str] = None
+    venue_name: str
+    meal_type: Literal["breakfast", "snack", "lunch", "dinner"]
+    start_time: str
+    duration_min: int = Field(gt=0)
+    nearby_attraction_id: Optional[str] = None
+    reason: str
+    evidence_refs: list[str]
+    dietary: Optional[list[str]] = None
+    cost_estimate: Optional[str] = None
+
+    @field_validator("venue_id")
+    @classmethod
+    def validate_venue_id(cls, value: Optional[str]):
+        if value is not None and not value.startswith(
+            ("restaurant:", "food:")
+        ):
+            raise ValueError("Invalid venue ID")
+        return value
+
+    @field_validator("start_time")
+    @classmethod
+    def validate_time(cls, value: str):
+        import datetime
+
+        try:
+            datetime.datetime.strptime(value, "%H:%M")
+        except ValueError as exc:
+            raise ValueError("Time must be HH:MM") from exc
+
+        return value
+
+
+# ---- New schemas for AI itinerary recommendations ----
+from typing import List, Optional
+
+class ItineraryAIRequest(BaseModel):
+    startDate: str
+    endDate: str
+    locationType: str
+    customLocation: Optional[str] = None
+    interests: List[str]
+    mustVisit: List[str]
+    foodPreference: str
+    dietaryRestrictions: Optional[str] = None
+    groupType: str
+    groupSize: int
+    budget: int
+    travelPace: str
+    crowdTolerance: str
+    hiddenGemsPreference: str
+
+class Proposal(BaseModel):
+    attraction_ids: List[str]
+    restaurant_ids: List[str]
+    reason: str
+    evidence_refs: List[str]
+
+class ItineraryAIResponse(BaseModel):
+    proposals: List[Proposal]
+
+# --------- AI itinerary recommendation models (C1) ---------
+from typing import List, Optional
+from pydantic import BaseModel, Field
+
+class ItineraryAIRequest(BaseModel):
+    startDate: str = Field(..., description="YYYY‑MM‑DD")
+    endDate: str = Field(..., description="YYYY‑MM‑DD")
+    locationType: str
+    customLocation: Optional[str] = None
+    interests: List[str]
+    mustVisit: List[str]
+    foodPreference: str
+    dietaryRestrictions: Optional[str] = None
+    groupType: str
+    groupSize: int
+    budget: int
+    travelPace: str
+    crowdTolerance: str
+    hiddenGemsPreference: str
+
+class Proposal(BaseModel):
+    attraction_ids: List[str]
+    restaurant_ids: List[str]
+    reason: str
+    evidence_refs: List[str]
+
+class ItineraryAIResponse(BaseModel):
+    proposals: List[Proposal]

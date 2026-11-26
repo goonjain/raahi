@@ -68,17 +68,16 @@ function computeAdjustments(reps: Report[]): Record<string, number> {
 
 function Index() {
   const [plan, setPlan] = useState<Plan>({
-  day: "Sun",
-  time: "full",
-  budget: 2000,
-  interests: ["heritage", "photography"],
-  type: "friends",
-  crowd: "avoid",
-  must: "amber",
-});
+    day: "Sun",
+    time: "full",
+    budget: 2000,
+    interests: ["heritage", "photography"],
+    type: "friends",
+    crowd: "avoid",
+    must: "amber",
+  });
 
-
-    const handleSelectFood = (date: string, restaurantId: string) => {
+  const handleSelectFood = (date: string, restaurantId: string) => {
     setFoodSelections((prev) => ({ ...prev, [date]: restaurantId }));
   };
 
@@ -95,19 +94,17 @@ function Index() {
   const [optimized, setOptimized] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Rewards balance: initialized from local persistent store, synced with backend
-  const [points, setPoints] = useState<number>(
-    () => observationsRepository.getUserProfile().points,
-  );
+  // Rewards balance
+  const [points, setPoints] = useState<number>(() => observationsRepository.getUserProfile().points);
 
-  // API-backed Community Pulse data
+  // Community Pulse data
   const [communityReports, setCommunityReports] = useState<Report[]>([]);
   const [destinations, setDestinations] = useState<DestinationItem[]>([]);
   const [loadingReports, setLoadingReports] = useState(true);
   const [reportsError, setReportsError] = useState<string | null>(null);
   const [pulseAdj, setPulseAdj] = useState<Record<string, number>>({});
 
-  // Local persistent observation repository state (Rajasthan DoT & live observations)
+  // Local persistent observation repository state
   const [, setRepoReports] = useState<CrowdReportRecord[]>(() =>
     observationsRepository.getReports("all"),
   );
@@ -125,89 +122,115 @@ function Index() {
   const [itineraryByDay, setItineraryByDay] = useState<Record<string, string[]> | null>(null);
   const [itineraryRequest, setItineraryRequest] = useState<ItineraryRequest | null>(null);
   const [optimizationFeedback, setOptimizationFeedback] = useState<Record<string, string>>({});
-  const [previousDayBeforeReplace, setPreviousDayBeforeReplace] =
-  useState<Record<string, string[]>>({});
-  // Callback from PlannerWizard with full request
-  const handleGenerateRequest = (req: ItineraryRequest) => {
-    const result = generateItinerary(req);
-    setItineraryByDay(result);
+  const [previousDayBeforeReplace, setPreviousDayBeforeReplace] = useState<Record<string, string[]>>({});
+
+  // Callback from PlannerWizard with full request – now integrates Groq recommendations
+  const handleGenerateRequest = async (req: ItineraryRequest) => {
+    let preferredIds: string[] | undefined = undefined;
+    try {
+      const res = await fetch("http://127.0.0.1:8000/v1/itinerary/recommendations", {
+        method: "POST",
+      headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json && Array.isArray(json.proposals) && json.proposals.length) {
+          const ids = json.proposals.flatMap((p: any) => p.attraction_ids ?? []);
+          const seen = new Set<string>();
+          const validIds = ids.filter((id: string) => {
+            const ok = byId(id) && !seen.has(id);
+            if (ok) seen.add(id);
+            return ok;
+          });
+          if (validIds.length) preferredIds = validIds;
+        }
+      }
+    } catch (e) {
+      // fallback – ignore and use deterministic generation
+    }
+    const result = generateItinerary(req, preferredIds);
+    const optimizedResult: Record<string, string[]> = {};
+    for (const [date, ids] of Object.entries(result)) {
+      optimizedResult[date] = optimizeDayStops(ids);
+    }
+    setItineraryByDay(optimizedResult);
     setItineraryRequest(req);
     setOptimizationFeedback({});
     setPreviousDayBeforeReplace({});
-    // Show itinerary section
     setShown(true);
     setOptimized(false);
     setTimeout(() => go("itinerary"), 50);
-
   };
-
 
   const handleOptimizeDay = (date: string) => {
     const oldIds = itineraryByDay?.[date];
     if (!oldIds) return;
     const optimizedIds = optimizeDayStops(oldIds);
     const changed = optimizedIds.join("|") !== oldIds.join("|");
-    if (changed) setItineraryByDay((previous) => previous ? { ...previous, [date]: optimizedIds } : previous);
+    if (changed) setItineraryByDay((previous) => (previous ? { ...previous, [date]: optimizedIds } : previous));
     setOptimizationFeedback((previous) => ({
       ...previous,
-      [date]: changed ? "Stops reordered using approximate geographic proximity." : "This route is already as short as the available approximation can find.",
+      [date]: changed
+        ? "Stops reordered using approximate geographic proximity."
+        : "This route is already as short as the available approximation can find.",
     }));
   };
+
   const handleReplaceMultiDay = (
-  date: string,
-  hotspotId: string,
-  alternativeId: string
-) => {
-  const currentIds = itineraryByDay?.[date];
-  if (!currentIds) return;
+    date: string,
+    hotspotId: string,
+    alternativeId: string,
+  ) => {
+    const currentIds = itineraryByDay?.[date];
+    if (!currentIds) return;
 
-  const index = currentIds.indexOf(hotspotId);
-  if (index === -1 || currentIds.includes(alternativeId)) return;
+    const index = currentIds.indexOf(hotspotId);
+    if (index === -1 || currentIds.includes(alternativeId)) return;
 
-  // Remember the day before replacement.
-  setPreviousDayBeforeReplace((prev) => ({
-    ...prev,
-    [date]: [...currentIds],
-  }));
+    // Remember the day before replacement.
+    setPreviousDayBeforeReplace((prev) => ({
+      ...prev,
+      [date]: [...currentIds],
+    }));
 
-  // Replace the attraction.
-  const updatedIds = [...currentIds];
-  updatedIds[index] = alternativeId;
+    // Replace the attraction.
+    const updatedIds = [...currentIds];
+    updatedIds[index] = alternativeId;
 
-  // Reorder the updated stops geographically.
-  const optimizedIds = optimizeDayStops(updatedIds);
+    // Reorder the updated stops geographically.
+    const optimizedIds = optimizeDayStops(updatedIds);
 
-  // Update only the affected day.
-  setItineraryByDay((prev) =>
-    prev ? { ...prev, [date]: optimizedIds } : prev
-  );
+    // Update only the affected day.
+    setItineraryByDay((prev) =>
+      prev ? { ...prev, [date]: optimizedIds } : prev
+    );
 
-  setOptimizationFeedback((prev) => ({
-    ...prev,
-    [date]:
-      "Attraction replaced and stop order recalculated using approximate geographic proximity.",
-  }));
-};
+    setOptimizationFeedback((prev) => ({
+      ...prev,
+      [date]:
+        "Attraction replaced and stop order recalculated using approximate geographic proximity.",
+    }));
+  };
 
-const handleUndoMultiDay = (date: string) => {
-  const previousIds = previousDayBeforeReplace[date];
-  if (!previousIds) return;
+  const handleUndoMultiDay = (date: string) => {
+    const previousIds = previousDayBeforeReplace[date];
+    if (!previousIds) return;
 
-  setItineraryByDay((prev) =>
-    prev ? { ...prev, [date]: previousIds } : prev
-  );
+    setItineraryByDay((prev) =>
+      prev ? { ...prev, [date]: previousIds } : prev
+    );
 
-  setPreviousDayBeforeReplace((prev) => {
-    const next = { ...prev };
-    delete next[date];
-    return next;
-  });
+    setPreviousDayBeforeReplace((prev) => ({
+      ...prev,
+      [date]: undefined,
+    }));
 
-  setOptimizationFeedback((prev) => ({
-    ...prev,
-    [date]: "Previous itinerary restored.",
-  }));
-};
+    setOptimizationFeedback((prev) => ({
+      ...prev,
+      [date]: "Previous itinerary restored.",
+    }));
+  };
 
   // Map focus and destination selection state
   const [selectedMapPlaceId, setSelectedMapPlaceId] = useState<string | null>(null);
@@ -360,13 +383,9 @@ const handleUndoMultiDay = (date: string) => {
       setCommunityReports((prev) =>
         prev.map((r) =>
           r.id === reportId
-            ? {
-                ...r,
-                accuracy_votes_count: (r.accuracy_votes_count || 0) + 1,
-                trust_weight: res.data!.trust_weight,
-              }
-            : r
-        )
+            ? { ...r, accuracy_votes_count: (r.accuracy_votes_count || 0) + 1, trust_weight: res.data!.trust_weight }
+            : r,
+        ),
       );
       setToast("Accuracy verified! Trust weight updated.");
       setTimeout(() => setToast(null), 2200);
@@ -380,7 +399,7 @@ const handleUndoMultiDay = (date: string) => {
     const res = await api.flagReport(reportId);
     if (res.data?.success) {
       setCommunityReports((prev) =>
-        prev.map((r) => (r.id === reportId ? { ...r, moderation_status: "flagged" } : r))
+        prev.map((r) => (r.id === reportId ? { ...r, moderation_status: "flagged" } : r)),
       );
       setToast("Report flagged for moderation review.");
       setTimeout(() => setToast(null), 2200);
@@ -454,9 +473,7 @@ const handleUndoMultiDay = (date: string) => {
         />
         <div className="absolute inset-0 bg-gradient-to-r from-indigo-deep/90 via-indigo-deep/60 to-transparent" />
         <div className="relative mx-auto w-full max-w-7xl px-4 text-primary-foreground">
-          <p className="font-display text-xl text-gold">
-            पधारो म्हारे देस · Welcome to the Pink City
-          </p>
+          <p className="font-display text-xl text-gold">पधारो म्हारे देस · Welcome to the Pink City</p>
           <h1 className="mt-3 max-w-3xl text-5xl leading-tight md:text-7xl font-bold">
             Same city, same day. <span className="text-saffron">Half the crowd.</span>
           </h1>
@@ -519,20 +536,20 @@ const handleUndoMultiDay = (date: string) => {
             <div id="itinerary" className="mt-14 scroll-mt-24">
               {itineraryByDay && itineraryRequest ? (
                 <MultiDayItinerary
-  byDay={itineraryByDay}
-  request={itineraryRequest}
-  observations={observations}
-  onOptimizeDay={handleOptimizeDay}
-  onReplace={handleReplaceMultiDay}
-  onUndo={handleUndoMultiDay}
-  canUndoByDay={Object.fromEntries(
-    Object.keys(previousDayBeforeReplace).map((date) => [date, true])
-  )}
-  foodSelections={foodSelections}
-onSelectFood={handleSelectFood}
-onRemoveFood={handleRemoveFood}
-  feedback={optimizationFeedback}
-/>
+                  byDay={itineraryByDay}
+                  request={itineraryRequest}
+                  observations={observations}
+                  onOptimizeDay={handleOptimizeDay}
+                  onReplace={handleReplaceMultiDay}
+                  onUndo={handleUndoMultiDay}
+                  canUndoByDay={Object.fromEntries(
+                    Object.keys(previousDayBeforeReplace).map((date) => [date, true])
+                  )}
+                  foodSelections={foodSelections}
+                  onSelectFood={handleSelectFood}
+                  onRemoveFood={handleRemoveFood}
+                  feedback={optimizationFeedback}
+                />
               ) : (
                 <Itinerary
                   plan={plan}
@@ -633,8 +650,6 @@ onRemoveFood={handleRemoveFood}
       <footer className="bg-indigo-deep py-12 text-center text-primary-foreground border-t border-gold/30">
         <div className="border-bandhani mb-8" />
         <p className="font-display text-3xl text-gold font-bold">राही · Raahi</p>
-      
-        
         <p className="mt-3 text-[11px] opacity-50">
           Crowd intelligence powered by Raahi Baseline v1.0. Community observations verified by DoT
           Command Center.

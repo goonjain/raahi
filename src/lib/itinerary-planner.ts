@@ -72,14 +72,23 @@ export function optimizeDayStops(ids: string[]): string[] {
 }
 
 /** Returns a dated array of attraction IDs for every selected day, including empty days. */
-export function generateItinerary(req: ItineraryRequest): Record<string, string[]> {
+export function generateItinerary(req: ItineraryRequest, preferredIds?: string[]): Record<string, string[]> {
   const days = daysBetween(req.startDate, req.endDate);
   if (days.length === 0) throw new Error("Please choose a valid trip date range (up to 31 days).");
   if (days[days.length - 1] !== req.endDate) throw new Error("Trip exceeds the supported 31-day range.");
   const matching = PLACES.filter((p: Place) => p.tags.some((tag) => req.interests.includes(tag)));
   const include = (id: string) => PLACE_BY_ID.has(id) &&
     (req.hiddenGemsPreference !== "no" || !PLACE_BY_ID.get(id)!.gem || req.mustVisit.includes(id));
-  const candidates = [...new Set([...req.mustVisit, ...matching.map((p) => p.id)])].filter(include);
+  const baseCandidates = [...new Set([...req.mustVisit, ...matching.map((p) => p.id)])].filter(include);
+  // Merge AI-preferred attraction IDs, preserving order and avoiding duplicates.
+  const candidates = (() => {
+    if (!preferredIds || preferredIds.length === 0) return baseCandidates;
+    // Keep only valid IDs that pass the same inclusion filter.
+    const validPref = preferredIds.filter((id) => include(id));
+    const prefSet = new Set(validPref);
+    // Prepend preferred IDs, then add any remaining base candidates not already included.
+    return [...validPref, ...baseCandidates.filter((id) => !prefSet.has(id))];
+  })();
   if (!candidates.length) candidates.push(...PLACES.filter((p) => !p.gem).slice(0, 5).map((p) => p.id));
   const plan: Record<string, string[]> = Object.fromEntries(days.map((date) => [date, []]));
   const capacity = Object.fromEntries(days.map((date) => {
