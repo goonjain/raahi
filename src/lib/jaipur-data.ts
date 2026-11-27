@@ -1,3 +1,4 @@
+// src/lib/jaipur-data.ts
 export type Level = "Low" | "Moderate" | "High" | "Critical";
 
 export type Place = {
@@ -14,6 +15,7 @@ export type Place = {
   peak: string;
   gem?: boolean;
   alternatives?: string[];
+  entry?: number;
   update: string;
 };
 
@@ -273,6 +275,7 @@ export const PLACES: Place[] = [
     gem: true,
     update: "Hand-block printing workshops open",
   },
+
 ];
 
 export const byId = (id: string): Place => {
@@ -289,19 +292,17 @@ export type ForecastInput = {
   festival: boolean;
   weather: "clear" | "hot" | "rain";
 };
-export type ForecastInput = {
-  day: string;
-  hour: number;
-  festival: boolean;
-  weather: "clear" | "hot" | "rain";
-};
 
 export function crowdScore(p: Place, f: ForecastInput, pulse = 0) {
   const weekend = f.day === "Sat" || f.day === "Sun" ? 12 : 0;
   const peakHour = p.gem ? 4 : f.hour >= 15 && f.hour <= 19 ? 18 : f.hour >= 11 ? 8 : -6;
   const event = f.festival ? (p.gem ? 6 : 14) : 0;
   const weather =
-    f.weather === "rain" ? -10 : f.weather === "hot" && f.hour >= 12 && f.hour <= 16 ? -6 : 0;
+    f.weather === "rain"
+      ? -10
+      : f.weather === "hot" && f.hour >= 12 && f.hour <= 16
+      ? -6
+      : 0;
   const s = p.base + weekend + peakHour + event + weather + pulse;
   return {
     score: Math.max(5, Math.min(99, Math.round(s))),

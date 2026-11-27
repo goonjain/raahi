@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import hero from "@/assets/hero-jaipur.jpg";
+import { api, type DestinationItem } from "@/lib/api";
 import {
   SectionTitle,
   Planner,
@@ -15,7 +16,9 @@ import {
 } from "@/components/musafir/Sections";
 import { byId } from "@/lib/jaipur-data";
 import { applyStopReplacement, removeStopReplacement } from "@/lib/recommendation";
-import { api, type DestinationItem } from "@/lib/api";
+import { generateItinerary, optimizeDayStops } from "@/lib/itinerary-planner";
+import type { ItineraryRequest } from "@/lib/itinerary-request";
+import MultiDayItinerary from "@/components/musafir/MultiDayItinerary";
 import { observationsRepository, type CrowdReportRecord } from "@/lib/observations-repository";
 import type { VerifiedObservation } from "@/lib/crowd-service";
 import { BellRing } from "lucide-react";
@@ -73,22 +76,35 @@ function Index() {
     crowd: "avoid",
     must: "amber",
   });
+
+  const handleSelectFood = (date: string, restaurantId: string) => {
+    setFoodSelections((prev) => ({ ...prev, [date]: restaurantId }));
+  };
+
+  const handleRemoveFood = (date: string) => {
+    setFoodSelections((prev) => {
+      const next = { ...prev };
+      delete next[date];
+      return next;
+    });
+  };
+  const [foodSelections, setFoodSelections] = useState<Record<string, string | undefined>>({});
+
   const [shown, setShown] = useState(false);
   const [optimized, setOptimized] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
-  // Rewards balance: initialized from local persistent store, synced with backend
-  const [points, setPoints] = useState<number>(
-    () => observationsRepository.getUserProfile().points,
-  );
+  // Rewards balance
+  const [points, setPoints] = useState<number>(() => observationsRepository.getUserProfile().points);
 
-  // API-backed Community Pulse data
+  // Community Pulse data
   const [communityReports, setCommunityReports] = useState<Report[]>([]);
   const [destinations, setDestinations] = useState<DestinationItem[]>([]);
   const [loadingReports, setLoadingReports] = useState(true);
   const [reportsError, setReportsError] = useState<string | null>(null);
   const [pulseAdj, setPulseAdj] = useState<Record<string, number>>({});
 
-  // Local persistent observation repository state (Rajasthan DoT & live observations)
+  // Local persistent observation repository state
   const [, setRepoReports] = useState<CrowdReportRecord[]>(() =>
     observationsRepository.getReports("all"),
   );
@@ -102,7 +118,143 @@ function Index() {
     observationsRepository.getActiveBroadcast(),
   );
 
-  const [toast, setToast] = useState<string | null>(null);
+  // State for multi‑day itinerary
+  const [itineraryByDay, setItineraryByDay] = useState<Record<string, string[]> | null>(null);
+  const [itineraryRequest, setItineraryRequest] = useState<ItineraryRequest | null>(null);
+  const [aiProposals, setAiProposals] = useState<any[]>([]);
+  const [optimizationFeedback, setOptimizationFeedback] = useState<Record<string, string>>({});
+  const [previousDayBeforeReplace, setPreviousDayBeforeReplace] = useState<Record<string, string[]>>({});
+  const multiDayRef = useRef<HTMLDivElement | null>(null);
+  const legacyItineraryRef = useRef<HTMLDivElement | null>(null);
+  const pendingItineraryScrollRef = useRef(false);
+  const pendingLegacyScrollRef = useRef(false);
+
+  useEffect(() => {
+    if (pendingItineraryScrollRef.current && itineraryByDay && itineraryRequest) {
+      pendingItineraryScrollRef.current = false;
+      multiDayRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [itineraryByDay, itineraryRequest]);
+
+  useEffect(() => {
+    if (pendingLegacyScrollRef.current && shown) {
+      pendingLegacyScrollRef.current = false;
+      legacyItineraryRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [shown]);
+
+
+  // Callback from PlannerWizard with full request – now integrates Groq recommendations
+  const handleGenerateRequest = async (req: ItineraryRequest) => {
+    let preferredIds: string[] | undefined = undefined;
+    let proposals: any[] = [];
+    try {
+      const res = await fetch("http://127.0.0.1:8000/v1/itinerary/recommendations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json && Array.isArray(json.proposals) && json.proposals.length) {
+          proposals = json.proposals;
+          const ids = json.proposals.flatMap((p: any) => p.attraction_ids ?? []);
+          const seen = new Set<string>();
+          const validIds = ids.filter((id: string) => {
+            const ok = byId(id) && !seen.has(id);
+            if (ok) seen.add(id);
+            return ok;
+          });
+          if (validIds.length) preferredIds = validIds;
+        }
+      }
+    } catch (e) {
+      // fallback – ignore and use deterministic generation
+    }
+    // Store AI proposals for UI explanations (even if empty)
+    setAiProposals(proposals);
+    const result = generateItinerary(req, preferredIds);
+    const optimizedResult: Record<string, string[]> = {};
+    for (const [date, ids] of Object.entries(result)) {
+      optimizedResult[date] = optimizeDayStops(ids);
+    }
+    pendingItineraryScrollRef.current = true;
+    setItineraryByDay(optimizedResult);
+    setItineraryRequest(req);
+    setOptimizationFeedback({});
+    setPreviousDayBeforeReplace({});
+  };
+
+  const handleOptimizeDay = (date: string) => {
+    const oldIds = itineraryByDay?.[date];
+    if (!oldIds) return;
+    const optimizedIds = optimizeDayStops(oldIds);
+    const changed = optimizedIds.join("|") !== oldIds.join("|");
+    if (changed) setItineraryByDay((previous) => (previous ? { ...previous, [date]: optimizedIds } : previous));
+    setOptimizationFeedback((previous) => ({
+      ...previous,
+      [date]: changed
+        ? "Stops reordered using approximate geographic proximity."
+        : "This route is already as short as the available approximation can find.",
+    }));
+  };
+
+  const handleReplaceMultiDay = (
+    date: string,
+    hotspotId: string,
+    alternativeId: string,
+  ) => {
+    const currentIds = itineraryByDay?.[date];
+    if (!currentIds) return;
+
+    const index = currentIds.indexOf(hotspotId);
+    if (index === -1 || currentIds.includes(alternativeId)) return;
+
+    // Remember the day before replacement.
+    setPreviousDayBeforeReplace((prev) => ({
+      ...prev,
+      [date]: [...currentIds],
+    }));
+
+    // Replace the attraction.
+    const updatedIds = [...currentIds];
+    updatedIds[index] = alternativeId;
+
+    // Reorder the updated stops geographically.
+    const optimizedIds = optimizeDayStops(updatedIds);
+
+    // Update only the affected day.
+    setItineraryByDay((prev) =>
+      prev ? { ...prev, [date]: optimizedIds } : prev
+    );
+
+    setOptimizationFeedback((prev) => ({
+      ...prev,
+      [date]:
+        "Attraction replaced and stop order recalculated using approximate geographic proximity.",
+    }));
+  };
+
+  const handleUndoMultiDay = (date: string) => {
+    const previousIds = previousDayBeforeReplace[date];
+    if (!previousIds) return;
+
+    // Re‑optimize the restored stops.
+    const optimizedIds = optimizeDayStops(previousIds);
+    setItineraryByDay((prev) =>
+      prev ? { ...prev, [date]: optimizedIds } : prev
+    );
+
+    setPreviousDayBeforeReplace((prev) => ({
+      ...prev,
+      [date]: undefined,
+    }));
+
+    setOptimizationFeedback((prev) => ({
+      ...prev,
+      [date]: "Previous itinerary restored and re‑optimized.",
+    }));
+  };
 
   // Map focus and destination selection state
   const [selectedMapPlaceId, setSelectedMapPlaceId] = useState<string | null>(null);
@@ -255,13 +407,9 @@ function Index() {
       setCommunityReports((prev) =>
         prev.map((r) =>
           r.id === reportId
-            ? {
-                ...r,
-                accuracy_votes_count: (r.accuracy_votes_count || 0) + 1,
-                trust_weight: res.data!.trust_weight,
-              }
-            : r
-        )
+            ? { ...r, accuracy_votes_count: (r.accuracy_votes_count || 0) + 1, trust_weight: res.data!.trust_weight }
+            : r,
+        ),
       );
       setToast("Accuracy verified! Trust weight updated.");
       setTimeout(() => setToast(null), 2200);
@@ -275,7 +423,7 @@ function Index() {
     const res = await api.flagReport(reportId);
     if (res.data?.success) {
       setCommunityReports((prev) =>
-        prev.map((r) => (r.id === reportId ? { ...r, moderation_status: "flagged" } : r))
+        prev.map((r) => (r.id === reportId ? { ...r, moderation_status: "flagged" } : r)),
       );
       setToast("Report flagged for moderation review.");
       setTimeout(() => setToast(null), 2200);
@@ -349,9 +497,7 @@ function Index() {
         />
         <div className="absolute inset-0 bg-gradient-to-r from-indigo-deep/90 via-indigo-deep/60 to-transparent" />
         <div className="relative mx-auto w-full max-w-7xl px-4 text-primary-foreground">
-          <p className="font-display text-xl text-gold">
-            पधारो म्हारे देस · Welcome to the Pink City
-          </p>
+          <p className="font-display text-xl text-gold">पधारो म्हारे देस · Welcome to the Pink City</p>
           <h1 className="mt-3 max-w-3xl text-5xl leading-tight md:text-7xl font-bold">
             Same city, same day. <span className="text-saffron">Half the crowd.</span>
           </h1>
@@ -404,13 +550,50 @@ function Index() {
               setOptimized(false);
             }}
             onGenerate={() => {
+              pendingLegacyScrollRef.current = true;
               setShown(true);
               setOptimized(false);
-              setTimeout(() => go("itinerary"), 50);
             }}
+            onGenerateRequest={handleGenerateRequest}
           />
+          {itineraryByDay && itineraryRequest && (
+            <div id="itinerary" ref={multiDayRef} className="mt-14 scroll-mt-24">
+              <MultiDayItinerary
+                byDay={itineraryByDay}
+                request={itineraryRequest}
+                observations={observations}
+                onOptimizeDay={handleOptimizeDay}
+                onReplace={handleReplaceMultiDay}
+                onUndo={handleUndoMultiDay}
+                canUndoByDay={Object.fromEntries(
+                  Object.keys(previousDayBeforeReplace).map((date) => [date, true])
+                )}
+                foodSelections={foodSelections}
+                onSelectFood={handleSelectFood}
+                onRemoveFood={handleRemoveFood}
+                feedback={optimizationFeedback}
+                aiProposals={aiProposals}
+              />
+            </div>
+          )}
+          <div className="mt-8 flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                if (!shown) {
+                  pendingLegacyScrollRef.current = true;
+                  setShown(true);
+                } else {
+                  setShown(false);
+                }
+              }}
+              className="text-sm underline text-muted-foreground hover:text-primary"
+            >
+              {shown ? "Hide 1-day crowd diversion comparison" : "View 1-day crowd diversion comparison (Before vs after)"}
+            </button>
+          </div>
           {shown && (
-            <div id="itinerary" className="mt-14 scroll-mt-24">
+            <div id="legacy-itinerary" ref={legacyItineraryRef} className="mt-8 scroll-mt-24">
               <Itinerary
                 plan={plan}
                 optimized={optimized}
@@ -468,9 +651,9 @@ function Index() {
               focusKey={mapFocusKey}
               onOptimize={(id) => {
                 setPlan({ ...plan, must: id });
+                pendingLegacyScrollRef.current = true;
                 setShown(true);
                 setOptimized(false);
-                setTimeout(() => go("itinerary"), 50);
               }}
             />
           </div>
@@ -509,12 +692,6 @@ function Index() {
       <footer className="bg-indigo-deep py-12 text-center text-primary-foreground border-t border-gold/30">
         <div className="border-bandhani mb-8" />
         <p className="font-display text-3xl text-gold font-bold">राही · Raahi</p>
-        <p className="mt-2 text-sm opacity-85">
-          Jaipur Crowd-Aware Travel Platform · Built for Code Slayer 2.0 / Dev SphereIndia
-        </p>
-        <p className="mt-1 text-xs opacity-65">
-          By Ashwajeet Sharma, Alice Sharma, Goon Jain & Paridhi Poddar
-        </p>
         <p className="mt-3 text-[11px] opacity-50">
           Crowd intelligence powered by Raahi Baseline v1.0. Community observations verified by DoT
           Command Center.

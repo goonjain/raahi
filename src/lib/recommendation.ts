@@ -1,4 +1,4 @@
-import type { Place } from "./jaipur-data";
+import { PLACES, type Place } from "@/lib/jaipur-data";
 
 /**
  * Result returned by a crowd prediction service or model.
@@ -132,7 +132,7 @@ const SPECIFIC_REASONS: Record<string, Record<string, string>> = {
     jaigarh: "A quieter hilltop fort alternative above Amer, featuring spacious battlements and the historic Jaivana cannon without the tourist rush.",
     panna: "A peaceful 16th-century stepwell just minutes from Amer Fort, featuring striking symmetrical geometric stairs.",
     jagat_shiromani: "A serene 16th-century carved stone temple and courtyard right beside Amer Fort, free from tour group crowds.",
-    gatore: "A tranquil heritage alternative featuring intricately carved white marble royal cenotaphs beneath the Nahargarh hills.",
+    gatore:"A quieter-feeling heritage alternative featuring carved white marble royal cenotaphs beneath the Nahargarh hills.",
   },
   nahargarh: {
     jaigarh: "A quieter hilltop fort alternative featuring spacious ridge ramparts and panoramic views without the Padao sunset crush.",
@@ -223,6 +223,47 @@ export function calculateTagMatch(
  * Ranks candidate destinations against a target hotspot using category match,
  * straight-line distance, affordability, and predicted crowd pressure (when available).
  */
+export function isReplacementFeasible(
+  targetId: string,
+  candidateId: string,
+  dayIds: string[],
+  maxStraightLineKm: number = 5
+): boolean {
+  // Ensure candidate is not already in the day's itinerary
+  if (dayIds.includes(candidateId)) return false;
+  // Must differ from target
+  if (candidateId === targetId) return false;
+
+  const targetIdx = dayIds.findIndex((id) => id === targetId);
+  if (targetIdx === -1) return false;
+
+  const prevId = dayIds[targetIdx - 1];
+  const nextId = dayIds[targetIdx + 1];
+
+  const target = PLACES.find((p) => p.id === targetId);
+  const candidate = PLACES.find((p) => p.id === candidateId);
+  if (!target || !candidate) return false;
+
+  // Check distance from candidate to adjacent stops (if any)
+  if (prevId) {
+    const prev = PLACES.find((p) => p.id === prevId);
+    if (prev) {
+      const d = calculateStraightLineDistanceKm(prev.lat, prev.lng, candidate.lat, candidate.lng);
+      if (d > maxStraightLineKm) return false;
+    }
+  }
+  if (nextId) {
+    const next = PLACES.find((p) => p.id === nextId);
+    if (next) {
+      const d = calculateStraightLineDistanceKm(candidate.lat, candidate.lng, next.lat, next.lng);
+      if (d > maxStraightLineKm) return false;
+    }
+  }
+
+  // Simple straight‑line feasibility – if within max distance to both neighbours it's acceptable
+  return true;
+}
+
 export function rankAlternatives(
   targetPlace: Place,
   candidatePool: Place[],

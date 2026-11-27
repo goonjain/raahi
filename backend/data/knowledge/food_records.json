@@ -1,0 +1,39 @@
+[
+  {
+    "attractionId": "food",
+    "name": "Dal Baati Churma",
+    "description": "Traditional Rajasthani dish consisting of baked wheat balls (baati) served with lentil curry (dal) and sweet crushed wheat dessert (churma).",
+    "interests": ["food", "culture"],
+    "geo": {"lat": 26.9124, "lng": 75.7873},
+    "openingHours": null,
+    "ticketPrice": null,
+    "accessibility": null,
+    "restrictions": null,
+    "visitDuration": null,
+    "sourceTitle": "Rajasthan Tourism – Rajasthani Cuisine",
+    "sourceUrl": "https://www.tourism.rajasthan.gov.in/rajasthani-cuisine.html",
+    "retrievedAt": "2024-01-15T10:00:00",
+    "verificationStatus": "verified",
+    "category": "dish",
+    "dietary": ["vegetarian"]
+  },
+  {
+    "attractionId": "food",
+    "name": "Jalebi at Bapu Bazaar",
+    "description": "Crispy sweet jalebi stalls commonly found in Bapu Bazaar, a bustling market area in Jaipur.",
+    "interests": ["snack", "street-food"],
+    "geo": {"lat": 26.9230, "lng": 75.8220},
+    "openingHours": "09:00-20:00",
+    "ticketPrice": null,
+    "accessibility": null,
+    "restrictions": null,
+    "visitDuration": null,
+    "sourceTitle": "Rajasthan Tourism – Rajasthani Cuisine",
+    "sourceUrl": "https://www.tourism.rajasthan.gov.in/rajasthani-cuisine.html",
+    "retrievedAt": "2024-01-15T10:00:00",
+    "verificationStatus": "verified",
+    "category": "food-area",
+    "dietary": []
+  }
+]
+
