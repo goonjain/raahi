@@ -1,6 +1,7 @@
 import { PLACES, byId, crowdScore, level, type ForecastInput, type Place } from "./jaipur-data";
 
 export const API_BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000/api";
+export const BACKEND_ORIGIN = API_BASE.replace(/\/api\/?$/, "");
 
 export function getUserId(): string {
   if (typeof window === "undefined") return "guest";

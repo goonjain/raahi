@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import hero from "@/assets/hero-jaipur.jpg";
-import { api, type DestinationItem } from "@/lib/api";
+import { api, BACKEND_ORIGIN, type DestinationItem } from "@/lib/api";
 import {
   SectionTitle,
   Planner,
@@ -149,7 +149,7 @@ function Index() {
     let preferredIds: string[] | undefined = undefined;
     let proposals: any[] = [];
     try {
-      const res = await fetch("http://127.0.0.1:8000/v1/itinerary/recommendations", {
+      const res = await fetch(`${BACKEND_ORIGIN}/v1/itinerary/recommendations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req),
