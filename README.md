@@ -8,7 +8,10 @@ Raahi is a smart tourism platform designed to transform how travellers explore d
 
 Rather than simply recommending popular attractions, Raahi aims to help travellers make better decisions about **where to go, when to visit and what to explore next**.
 
-**Project developed by:** [YOUR TEAM NAME]  
+**Project developed by:** Aditya Vinayak Singh
+                          Goon Jain
+                          Alice Sharma
+                          Paridhi Poddar
 **Project type:** Academic / Software Engineering / Smart Tourism  
 **Initial destination:** Jaipur, Rajasthan, India
 
@@ -475,4 +478,4 @@ By combining AI recommendations with structured planning, community insights and
 **RAAHI | राही**  
 *Beyond the Crowds. Into the Extraordinary.*
 
-**Developed by [YOUR TEAM NAME]**
+
