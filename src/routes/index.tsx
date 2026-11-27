@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import hero from "@/assets/hero-jaipur.jpg";
 import { api, type DestinationItem } from "@/lib/api";
 import {
@@ -121,21 +121,43 @@ function Index() {
   // State for multi‑day itinerary
   const [itineraryByDay, setItineraryByDay] = useState<Record<string, string[]> | null>(null);
   const [itineraryRequest, setItineraryRequest] = useState<ItineraryRequest | null>(null);
+  const [aiProposals, setAiProposals] = useState<any[]>([]);
   const [optimizationFeedback, setOptimizationFeedback] = useState<Record<string, string>>({});
   const [previousDayBeforeReplace, setPreviousDayBeforeReplace] = useState<Record<string, string[]>>({});
+  const multiDayRef = useRef<HTMLDivElement | null>(null);
+  const legacyItineraryRef = useRef<HTMLDivElement | null>(null);
+  const pendingItineraryScrollRef = useRef(false);
+  const pendingLegacyScrollRef = useRef(false);
+
+  useEffect(() => {
+    if (pendingItineraryScrollRef.current && itineraryByDay && itineraryRequest) {
+      pendingItineraryScrollRef.current = false;
+      multiDayRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [itineraryByDay, itineraryRequest]);
+
+  useEffect(() => {
+    if (pendingLegacyScrollRef.current && shown) {
+      pendingLegacyScrollRef.current = false;
+      legacyItineraryRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [shown]);
+
 
   // Callback from PlannerWizard with full request – now integrates Groq recommendations
   const handleGenerateRequest = async (req: ItineraryRequest) => {
     let preferredIds: string[] | undefined = undefined;
+    let proposals: any[] = [];
     try {
       const res = await fetch("http://127.0.0.1:8000/v1/itinerary/recommendations", {
         method: "POST",
-      headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req),
       });
       if (res.ok) {
         const json = await res.json();
         if (json && Array.isArray(json.proposals) && json.proposals.length) {
+          proposals = json.proposals;
           const ids = json.proposals.flatMap((p: any) => p.attraction_ids ?? []);
           const seen = new Set<string>();
           const validIds = ids.filter((id: string) => {
@@ -149,18 +171,18 @@ function Index() {
     } catch (e) {
       // fallback – ignore and use deterministic generation
     }
+    // Store AI proposals for UI explanations (even if empty)
+    setAiProposals(proposals);
     const result = generateItinerary(req, preferredIds);
     const optimizedResult: Record<string, string[]> = {};
     for (const [date, ids] of Object.entries(result)) {
       optimizedResult[date] = optimizeDayStops(ids);
     }
+    pendingItineraryScrollRef.current = true;
     setItineraryByDay(optimizedResult);
     setItineraryRequest(req);
     setOptimizationFeedback({});
     setPreviousDayBeforeReplace({});
-    setShown(true);
-    setOptimized(false);
-    setTimeout(() => go("itinerary"), 50);
   };
 
   const handleOptimizeDay = (date: string) => {
@@ -217,8 +239,10 @@ function Index() {
     const previousIds = previousDayBeforeReplace[date];
     if (!previousIds) return;
 
+    // Re‑optimize the restored stops.
+    const optimizedIds = optimizeDayStops(previousIds);
     setItineraryByDay((prev) =>
-      prev ? { ...prev, [date]: previousIds } : prev
+      prev ? { ...prev, [date]: optimizedIds } : prev
     );
 
     setPreviousDayBeforeReplace((prev) => ({
@@ -228,7 +252,7 @@ function Index() {
 
     setOptimizationFeedback((prev) => ({
       ...prev,
-      [date]: "Previous itinerary restored.",
+      [date]: "Previous itinerary restored and re‑optimized.",
     }));
   };
 
@@ -526,40 +550,58 @@ function Index() {
               setOptimized(false);
             }}
             onGenerate={() => {
+              pendingLegacyScrollRef.current = true;
               setShown(true);
               setOptimized(false);
-              setTimeout(() => go("itinerary"), 50);
             }}
             onGenerateRequest={handleGenerateRequest}
           />
+          {itineraryByDay && itineraryRequest && (
+            <div id="itinerary" ref={multiDayRef} className="mt-14 scroll-mt-24">
+              <MultiDayItinerary
+                byDay={itineraryByDay}
+                request={itineraryRequest}
+                observations={observations}
+                onOptimizeDay={handleOptimizeDay}
+                onReplace={handleReplaceMultiDay}
+                onUndo={handleUndoMultiDay}
+                canUndoByDay={Object.fromEntries(
+                  Object.keys(previousDayBeforeReplace).map((date) => [date, true])
+                )}
+                foodSelections={foodSelections}
+                onSelectFood={handleSelectFood}
+                onRemoveFood={handleRemoveFood}
+                feedback={optimizationFeedback}
+                aiProposals={aiProposals}
+              />
+            </div>
+          )}
+          <div className="mt-8 flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                if (!shown) {
+                  pendingLegacyScrollRef.current = true;
+                  setShown(true);
+                } else {
+                  setShown(false);
+                }
+              }}
+              className="text-sm underline text-muted-foreground hover:text-primary"
+            >
+              {shown ? "Hide 1-day crowd diversion comparison" : "View 1-day crowd diversion comparison (Before vs after)"}
+            </button>
+          </div>
           {shown && (
-            <div id="itinerary" className="mt-14 scroll-mt-24">
-              {itineraryByDay && itineraryRequest ? (
-                <MultiDayItinerary
-                  byDay={itineraryByDay}
-                  request={itineraryRequest}
-                  observations={observations}
-                  onOptimizeDay={handleOptimizeDay}
-                  onReplace={handleReplaceMultiDay}
-                  onUndo={handleUndoMultiDay}
-                  canUndoByDay={Object.fromEntries(
-                    Object.keys(previousDayBeforeReplace).map((date) => [date, true])
-                  )}
-                  foodSelections={foodSelections}
-                  onSelectFood={handleSelectFood}
-                  onRemoveFood={handleRemoveFood}
-                  feedback={optimizationFeedback}
-                />
-              ) : (
-                <Itinerary
-                  plan={plan}
-                  optimized={optimized}
-                  setOptimized={setOptimized}
-                  observations={observations}
-                  onReward={(n) => reward(n, "Smart Route unlocked · +80 Raahi points!")}
-                  onResetReplacements={handleResetReplacements}
-                />
-              )}
+            <div id="legacy-itinerary" ref={legacyItineraryRef} className="mt-8 scroll-mt-24">
+              <Itinerary
+                plan={plan}
+                optimized={optimized}
+                setOptimized={setOptimized}
+                observations={observations}
+                onReward={(n) => reward(n, "Smart Route unlocked · +80 Raahi points!")}
+                onResetReplacements={handleResetReplacements}
+              />
             </div>
           )}
         </section>
@@ -609,9 +651,9 @@ function Index() {
               focusKey={mapFocusKey}
               onOptimize={(id) => {
                 setPlan({ ...plan, must: id });
+                pendingLegacyScrollRef.current = true;
                 setShown(true);
                 setOptimized(false);
-                setTimeout(() => go("itinerary"), 50);
               }}
             />
           </div>

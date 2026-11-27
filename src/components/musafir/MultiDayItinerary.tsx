@@ -29,6 +29,8 @@ type Props = {
   foodSelections: Record<string, string | undefined>;
   onSelectFood: (date: string, restaurantId: string) => void;
   onRemoveFood: (date: string) => void;
+  // AI proposals
+  aiProposals?: { attraction_ids: string[]; restaurant_ids: string[]; reason: string; evidence_refs: string[] }[];
 };
 
 function formatHour(hour: number): string {
@@ -49,7 +51,19 @@ export default function MultiDayItinerary({
   onSelectFood,
   onRemoveFood,
   feedback,
+  aiProposals = [],
 }: Props) {
+  // Build a quick lookup for attraction reasons from AI proposals
+  const reasonMap = new Map<string, string>();
+  aiProposals.forEach((p) => {
+    if (Array.isArray(p.attraction_ids)) {
+      p.attraction_ids.forEach((id) => {
+        if (!reasonMap.has(id) && p.reason) {
+          reasonMap.set(id, p.reason);
+        }
+      });
+    }
+  });
   const dates = Object.keys(byDay).sort();
   const [activeHotspot, setActiveHotspot] = useState<string | null>(null);
   const [showFood, setShowFood] = useState<Record<string, boolean>>({});
@@ -93,14 +107,6 @@ export default function MultiDayItinerary({
                   {weekday} · {formatHour(start)}–{formatHour(end)} suggested sightseeing window
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => onOptimizeDay(date)}
-                disabled={ids.length < 3}
-                className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Optimize Day {dayIndex + 1}
-              </button>
               {canUndoByDay[date] && (
                 <button type="button" onClick={() => onUndo(date)} className="text-sm underline text-primary">
                   Undo last replacement
@@ -178,6 +184,11 @@ export default function MultiDayItinerary({
                             ))
                           )}
                         </div>
+                      )}
+                      {reasonMap.get(id) && (
+                        <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+                          AI insight: {reasonMap.get(id)}
+                        </p>
                       )}
                       <p className="mt-1 text-xs text-muted-foreground">
                         Estimated visit slot · approximately {Math.round(step * 60)} minutes including transition buffer

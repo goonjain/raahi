@@ -222,6 +222,11 @@ class ItineraryAIRequest(BaseModel):
     travelPace: str
     crowdTolerance: str
     hiddenGemsPreference: str
+    # Additional notes (optional free‑form strings)
+    notesStep1: Optional[str] = None
+    notesStep2: Optional[str] = None
+    notesStep3: Optional[str] = None
+    notesStep4: Optional[str] = None
 
 class Proposal(BaseModel):
     attraction_ids: List[str]

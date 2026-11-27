@@ -35,6 +35,15 @@ def _build_query(req: ItineraryAIRequest) -> str:
     parts.append(req.foodPreference)
     if req.dietaryRestrictions:
         parts.append(req.dietaryRestrictions)
+    # Include additional notes if provided to guide recommendations
+    if getattr(req, 'notesStep1', None):
+        parts.append(req.notesStep1)
+    if getattr(req, 'notesStep2', None):
+        parts.append(req.notesStep2)
+    if getattr(req, 'notesStep3', None):
+        parts.append(req.notesStep3)
+    if getattr(req, 'notesStep4', None):
+        parts.append(req.notesStep4)
     return " ".join(parts)
 
 def _validate_proposal(

@@ -61,7 +61,7 @@ const foodPrefs = [
 ];
 
 // ---- Main component ------------------------------------------------
-type PlannerWizardProps = { plan: Plan; setPlan: (p: Plan) => void; onGenerate: () => void; onGenerateRequest?: (req: ItineraryRequest) => void };
+type PlannerWizardProps = { plan: Plan; setPlan: (p: Plan) => void; onGenerate: () => void; onGenerateRequest?: (req: ItineraryRequest) => void | Promise<void> };
 export default function PlannerWizard({ plan, setPlan, onGenerate, onGenerateRequest }: PlannerWizardProps) {
   const [step, setStep] = useState(1);
   const totalSteps = 4;
@@ -129,15 +129,21 @@ export default function PlannerWizard({ plan, setPlan, onGenerate, onGenerateReq
     if (step > 1) setStep(step - 1);
   };
 
-  const finalize = () => {
+  const finalize = async () => {
     setSubmitting(true);
-    // Build the itinerary request from current plan and preferences
-    const request = buildRequest({ ...plan, crowd: crowdPref }, { ...preferences, crowdTolerance: crowdPref as TripPreferences["crowdTolerance"] });
-    // Forward request to parent if callback provided
-    if (onGenerateRequest) onGenerateRequest(request);
-    setPlan({ ...plan, crowd: crowdPref, must: plan.must });
-    onGenerate();
-    setTimeout(() => setSubmitting(false), 500);
+    try {
+      // Build the itinerary request from current plan and preferences
+      const request = buildRequest({ ...plan, crowd: crowdPref }, { ...preferences, crowdTolerance: crowdPref as TripPreferences["crowdTolerance"] });
+      setPlan({ ...plan, crowd: crowdPref, must: plan.must });
+      // Forward request to parent if callback provided; otherwise fall back to legacy onGenerate
+      if (onGenerateRequest) {
+        await onGenerateRequest(request);
+      } else {
+        onGenerate();
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
   // ---- Progress bar -------------------------------------------------
   const renderProgress = () => {
@@ -270,7 +276,7 @@ export default function PlannerWizard({ plan, setPlan, onGenerate, onGenerateReq
               </Field>
               <Field label="Anything else we should know?">
                 <textarea
-                  placeholder="I'm reaching after an overnight train, so I'd prefer an easy first morning."
+                  placeholder="Travelling with elderly parents, prefer less walking, vegetarian food, peaceful places..."
                   rows={3}
                   className="w-full rounded border p-2"
                   value={preferences.notesStep1}
