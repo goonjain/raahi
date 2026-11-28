@@ -80,6 +80,7 @@ app.include_router(legacy_compat.router)
 app.include_router(knowledge.router)
 app.include_router(itinerary_food.router)
 app.include_router(itinerary_ai.router)
+app.include_router(itinerary_ai.router, prefix="/api")
 
 if __name__ == "__main__":
     import uvicorn

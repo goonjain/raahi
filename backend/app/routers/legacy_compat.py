@@ -45,8 +45,8 @@ def get_places(db: Session = Depends(get_db)):
 @router.get("/pulse")
 def get_pulse(db: Session = Depends(get_db)):
     now = datetime.datetime.now(datetime.timezone.utc)
-    reports = db.query(CrowdReport).join(Destination).join(Destination.reports).filter(
-        CrowdReport.moderation_status != "rejected"
+    reports = db.query(CrowdReport).join(Destination).join(User).filter(
+        CrowdReport.moderation_status == "approved"
     ).order_by(CrowdReport.submitted_at.desc()).limit(20).all()
 
     formatted_reports = []
@@ -60,9 +60,12 @@ def get_pulse(db: Session = Depends(get_db)):
             "ago": format_relative_time(r.submitted_at, now),
         })
 
-    # Compute live pulse adjustments per place based on recent reports
+    # Compute live pulse adjustments per place based only on recent approved reports
     stale_cutoff = now - datetime.timedelta(minutes=settings.STALE_WINDOW_MINUTES)
-    recent = db.query(CrowdReport).filter(CrowdReport.submitted_at >= stale_cutoff).all()
+    recent = db.query(CrowdReport).filter(
+        CrowdReport.moderation_status == "approved",
+        CrowdReport.submitted_at >= stale_cutoff,
+    ).all()
     by_place = {}
     for r in recent:
         by_place.setdefault(r.destination_id, []).append(r)
@@ -97,7 +100,8 @@ def submit_pulse(
         db.commit()
         db.refresh(dest)
 
-    mod_status, _ = check_moderation(tip)
+    mod_check, _ = check_moderation(tip)
+    mod_status = "flagged" if mod_check == "flagged" else "pending"
     baseline_score, _ = calculate_baseline_forecast(base=dest.base_crowd, is_gem=dest.is_gem, hour=now.hour)
 
     report = CrowdReport(
@@ -112,32 +116,15 @@ def submit_pulse(
         trust_weight=1.0,
     )
     db.add(report)
-    db.flush()
-
-    points_awarded = 0
-    if mod_status == "approved":
-        one_day_ago = now - datetime.timedelta(hours=24)
-        daily_points = db.query(func.coalesce(func.sum(Reward.points), 0)).filter(
-            Reward.user_id == user.id, Reward.created_at >= one_day_ago
-        ).scalar() or 0
-
-        if daily_points < settings.DAILY_POINTS_CAP:
-            ref_id = f"pulse_report_{report.id}"
-            reward = Reward(
-                user_id=user.id,
-                points=settings.POINTS_PER_CHECKIN,
-                reason=f"Check-in at {dest.name}",
-                reference_id=ref_id,
-                created_at=now
-            )
-            db.add(reward)
-            points_awarded = settings.POINTS_PER_CHECKIN
-
     db.commit()
     db.refresh(report)
 
-    # Return pulse state
-    return get_pulse(db=db)
+    # Return public pulse state (pending/flagged reports remain hidden until admin approval)
+    pulse_state = get_pulse(db=db)
+    pulse_state["submitted_report_id"] = report.id
+    pulse_state["moderation_status"] = report.moderation_status
+    pulse_state["points_awarded"] = 0
+    return pulse_state
 
 # Musafir Circle simulation state
 circle_votes = {"jaigarh": 2, "panna": 1, "albert": 1}

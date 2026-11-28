@@ -1,7 +1,10 @@
 import { PLACES, byId, crowdScore, level, type ForecastInput, type Place } from "./jaipur-data";
 
 function resolveApiBase(): string {
-  const configured = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  const configured = (
+    (import.meta.env.VITE_API_URL as string | undefined) ??
+    (typeof process !== "undefined" ? process.env?.VITE_API_URL : undefined)
+  )?.trim();
   if (configured) {
     return configured.replace(/\/+$/, "");
   }
@@ -11,6 +14,9 @@ function resolveApiBase(): string {
       // Production deployment without VITE_API_URL must not silently call localhost
       return "";
     }
+  } else if (import.meta.env.PROD) {
+    // SSR production bundle without VITE_API_URL must not fall back to localhost
+    return "";
   }
   return "http://localhost:8000/api";
 }
@@ -491,5 +497,52 @@ export const api = {
       body: JSON.stringify({ shift }),
     });
     return res.data;
+  },
+
+  /* ---------------- AI Itinerary Recommendations ---------------- */
+  async recommendItinerary(payload: unknown) {
+    if (!API_BASE || !BACKEND_ORIGIN) {
+      return {
+        data: null,
+        error: "Backend API URL (VITE_API_URL) is not configured for this deployed site. Requests to localhost are disabled in production.",
+        status: 0,
+      };
+    }
+    try {
+      const res = await fetch(`${BACKEND_ORIGIN}/v1/itinerary/recommendations`, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        // Non-json response
+      }
+      if (!res.ok) {
+        return { data: null, error: json?.detail || json?.message || `HTTP error ${res.status}`, status: res.status };
+      }
+      return {
+        data: json as {
+          proposals: Array<{
+            attraction_ids: string[];
+            restaurant_ids: string[];
+            reason: string;
+            evidence_refs: string[];
+          }>;
+        },
+        error: null,
+        status: res.status,
+      };
+    } catch {
+      return {
+        data: null,
+        error: "Unable to connect to Musafir backend server. Please check your connection or start the backend service.",
+        status: 0,
+      };
+    }
   },
 };

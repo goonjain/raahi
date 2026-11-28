@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import hero from "@/assets/hero-jaipur.jpg";
-import { api, BACKEND_ORIGIN, type DestinationItem } from "@/lib/api";
+import { api, type DestinationItem } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import {
   SectionTitle,
@@ -147,31 +147,25 @@ function Index() {
   }, [shown]);
 
 
-  // Callback from PlannerWizard with full request – now integrates Groq recommendations
+  // Callback from PlannerWizard with full request – integrates Groq AI insights with deterministic fallback
   const handleGenerateRequest = async (req: ItineraryRequest) => {
     let preferredIds: string[] | undefined = undefined;
     let proposals: any[] = [];
     try {
-      const res = await fetch(`${BACKEND_ORIGIN}/v1/itinerary/recommendations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json && Array.isArray(json.proposals) && json.proposals.length) {
-          proposals = json.proposals;
-          const ids = json.proposals.flatMap((p: any) => p.attraction_ids ?? []);
-          const seen = new Set<string>();
-          const validIds = ids.filter((id: string) => {
-            const ok = byId(id) && !seen.has(id);
-            if (ok) seen.add(id);
-            return ok;
-          });
-          if (validIds.length) preferredIds = validIds;
-        }
+      const res = await api.recommendItinerary(req);
+      const json = res.data;
+      if (json && Array.isArray(json.proposals) && json.proposals.length) {
+        proposals = json.proposals;
+        const ids = json.proposals.flatMap((p) => p.attraction_ids ?? []);
+        const seen = new Set<string>();
+        const validIds = ids.filter((id: string) => {
+          const ok = byId(id) && !seen.has(id);
+          if (ok) seen.add(id);
+          return ok;
+        });
+        if (validIds.length) preferredIds = validIds;
       }
-    } catch (e) {
+    } catch {
       // fallback – ignore and use deterministic generation
     }
     // Store AI proposals for UI explanations (even if empty)

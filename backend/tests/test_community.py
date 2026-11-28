@@ -686,3 +686,35 @@ def test_cross_device_shared_community_lifecycle():
     b_feed_after_reject = fresh_device_b.get("/api/crowd-reports").json()
     assert all(r["id"] != report_id for r in b_feed_after_reject["reports"])
 
+
+def test_legacy_pulse_enforces_pending_moderation_and_hides_unapproved():
+    """Regression: POST /api/pulse must queue as pending with 0 pts, and GET /api/pulse must exclude unapproved reports."""
+    tourist = _signup_client("PulseUser", "pulse_user@example.com")
+    admin_client = _admin_client()
+
+    sub = tourist.post(
+        "/api/pulse",
+        json={"place": "amber", "status": "Packed", "tip": "Very crowded at main gate"},
+    )
+    assert sub.status_code == 200
+    sub_data = sub.json()
+    assert sub_data["moderation_status"] == "pending"
+    assert sub_data["points_awarded"] == 0
+    report_id = sub_data["submitted_report_id"]
+
+    # Public /api/pulse must not expose pending reports or apply crowd adjustments
+    pub_pending = client.get("/api/pulse").json()
+    assert all(r["id"] != report_id for r in pub_pending["reports"])
+    assert "amber" not in pub_pending["pulseAdjustments"]
+
+    # Rewards must not be granted before admin approval
+    assert tourist.get("/api/rewards/balance").json()["total_points"] == 0
+
+    # Admin approves -> becomes visible in /api/pulse and awards points
+    assert admin_client.patch(f"/api/admin/reports/{report_id}", json={"status": "approved"}).status_code == 200
+    pub_approved = client.get("/api/pulse").json()
+    assert any(r["id"] == report_id for r in pub_approved["reports"])
+    assert "amber" in pub_approved["pulseAdjustments"]
+    assert tourist.get("/api/rewards/balance").json()["total_points"] == 20
+
+
