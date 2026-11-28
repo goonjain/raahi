@@ -7,7 +7,7 @@ from sqlalchemy import text
 from backend.app.config import settings
 from backend.app.database import engine, Base, SessionLocal
 from backend.app.models import Destination, User
-from backend.app.routers import community, rewards, gems, admin, legacy_compat, social, knowledge, itinerary_food, itinerary_ai
+from backend.app.routers import auth, community, rewards, gems, admin, legacy_compat, social, knowledge, itinerary_food, itinerary_ai
 
 from backend.app.data.canonical_destinations import CANONICAL_DESTINATIONS
 
@@ -60,16 +60,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration
+# CORS configuration (explicit origins required when allow_credentials=True)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Include Routers
+app.include_router(auth.router)
 app.include_router(community.router)
 app.include_router(social.router)
 app.include_router(rewards.router)

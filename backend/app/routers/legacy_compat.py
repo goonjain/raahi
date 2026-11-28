@@ -5,8 +5,9 @@ from sqlalchemy import func
 from typing import Optional
 
 from backend.app.database import get_db
-from backend.app.models import Destination, CrowdReport, Reward, AccuracyVote
-from backend.app.routers.community import get_or_create_user, format_relative_time
+from backend.app.models import Destination, CrowdReport, Reward, AccuracyVote, User
+from backend.app.routers.community import format_relative_time
+from backend.app.services.auth import require_authenticated_user
 from backend.app.services.crowd_engine import calculate_baseline_forecast, compute_live_crowd_adjustment, get_crowd_level_category
 from backend.app.services.moderation import check_moderation
 from backend.app.config import settings
@@ -81,15 +82,14 @@ def get_pulse(db: Session = Depends(get_db)):
 def submit_pulse(
     request_data: dict,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
     now = datetime.datetime.now(datetime.timezone.utc)
     place_id = request_data.get("place", "hawa")
     status_str = request_data.get("status", "Quiet")
     tip = (request_data.get("tip") or "").strip()
-    user_name = request_data.get("user", "Traveller")
 
-    user = get_or_create_user(db, x_user_id, user_name)
+    user = current_user
     dest = db.query(Destination).filter(Destination.id == place_id).first()
     if not dest:
         dest = Destination(id=place_id, name=place_id.capitalize(), base_crowd=50)

@@ -11,7 +11,8 @@ from backend.app.schemas import (
     PostCommentCreate, PostCommentResponse
 )
 from backend.app.services.moderation import check_moderation
-from backend.app.routers.community import get_or_create_user, format_relative_time
+from backend.app.services.auth import get_optional_current_user, require_authenticated_user
+from backend.app.routers.community import format_relative_time
 
 router = APIRouter(prefix="/api", tags=["Travel Social Community"])
 
@@ -21,25 +22,25 @@ def get_travel_posts(
     limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
-    query = db.query(TravelPost).filter(TravelPost.moderation_status != "rejected")
+    query = db.query(TravelPost).filter(TravelPost.moderation_status.notin_(["rejected", "pending"]))
     if destination_id and destination_id != "all":
         query = query.filter(TravelPost.destination_id == destination_id)
 
     posts = query.order_by(TravelPost.created_at.desc()).offset(offset).limit(limit).all()
     
     now = datetime.datetime.now(datetime.timezone.utc)
-    current_user_id = x_user_id
+    current_user_id = current_user.id if current_user else None
 
     result = []
     for post in posts:
         likes_count = len(post.likes)
         has_liked = any(like.user_id == current_user_id for like in post.likes) if current_user_id else False
         
-        # Load approved comments
+        # Load approved comments only
         approved_comments = [
-            c for c in post.comments if c.moderation_status != "rejected"
+            c for c in post.comments if c.moderation_status == "approved"
         ]
         comments_count = len(approved_comments)
         
@@ -84,9 +85,9 @@ def get_travel_posts(
 def create_travel_post(
     payload: TravelPostCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id, payload.user_name)
+    user = current_user
 
     dest = None
     if payload.destination_id and payload.destination_id != "all":
@@ -138,9 +139,9 @@ def create_travel_post(
 def toggle_post_like(
     post_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id)
+    user = current_user
     post = db.query(TravelPost).filter(TravelPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Travel post not found.")
@@ -189,7 +190,7 @@ def get_post_comments(
 
     comments = db.query(PostComment).filter(
         PostComment.post_id == post.id,
-        PostComment.moderation_status != "rejected"
+        PostComment.moderation_status == "approved"
     ).order_by(PostComment.created_at.asc()).all()
 
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -212,9 +213,9 @@ def create_post_comment(
     post_id: int,
     payload: PostCommentCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id, payload.user_name)
+    user = current_user
     post = db.query(TravelPost).filter(TravelPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Travel post not found.")

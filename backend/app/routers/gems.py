@@ -1,11 +1,10 @@
 import datetime
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
 
 from backend.app.database import get_db
-from backend.app.models import Destination, GemSuggestion, GemConfirmation
-from backend.app.routers.community import get_or_create_user
+from backend.app.models import Destination, GemSuggestion, GemConfirmation, User
+from backend.app.services.auth import require_authenticated_user
 from backend.app.schemas import (
     GemSuggestionCreate, GemSuggestionResponse, GemConfirmationCreate
 )
@@ -17,9 +16,9 @@ router = APIRouter(prefix="/api", tags=["Hidden Gems"])
 def submit_gem_suggestion(
     payload: GemSuggestionCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id)
+    user = current_user
 
     suggestion = GemSuggestion(
         user_id=user.id,
@@ -45,9 +44,9 @@ def submit_gem_suggestion(
 @router.get("/gem-suggestions/mine")
 def get_my_gem_suggestions(
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id)
+    user = current_user
     suggestions = db.query(GemSuggestion).filter(
         GemSuggestion.user_id == user.id
     ).order_by(GemSuggestion.created_at.desc()).all()
@@ -133,9 +132,9 @@ def confirm_gem_visit(
     gem_id: str,
     payload: GemConfirmationCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id)
+    user = current_user
     today = datetime.datetime.now(datetime.timezone.utc).date()
 
     existing = db.query(GemConfirmation).filter(

@@ -11,7 +11,9 @@ class User(Base):
 
     id = Column(String(64), primary_key=True, index=True)
     username = Column(String(64), nullable=False, default="Traveller")
-    role = Column(String(20), nullable=False, default="traveller") # traveller, admin
+    email = Column(String(255), unique=True, index=True, nullable=True)
+    password_hash = Column(String(255), nullable=True)
+    role = Column(String(20), nullable=False, default="tourist") # tourist, admin, or legacy traveller
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
     reports = relationship("CrowdReport", back_populates="user", cascade="all, delete-orphan")
@@ -21,6 +23,20 @@ class User(Base):
     posts = relationship("TravelPost", back_populates="user", cascade="all, delete-orphan")
     post_likes = relationship("PostLike", back_populates="user", cascade="all, delete-orphan")
     post_comments = relationship("PostComment", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(String(64), primary_key=True, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    user_id = Column(String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="sessions")
 
 
 class Destination(Base):

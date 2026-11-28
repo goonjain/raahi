@@ -1,7 +1,22 @@
 import { PLACES, byId, crowdScore, level, type ForecastInput, type Place } from "./jaipur-data";
 
-export const API_BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000/api";
-export const BACKEND_ORIGIN = API_BASE.replace(/\/api\/?$/, "");
+function resolveApiBase(): string {
+  const configured = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host && host !== "localhost" && host !== "127.0.0.1") {
+      // Production deployment without VITE_API_URL must not silently call localhost
+      return "";
+    }
+  }
+  return "http://localhost:8000/api";
+}
+
+export const API_BASE = resolveApiBase();
+export const BACKEND_ORIGIN = API_BASE ? API_BASE.replace(/\/api\/?$/, "") : "";
 
 export function getUserId(): string {
   if (typeof window === "undefined") return "guest";
@@ -31,15 +46,22 @@ export type ApiResponse<T> = {
 };
 
 async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
-  const userId = getUserId();
+  if (!API_BASE) {
+    return {
+      data: null,
+      error: "Backend API URL (VITE_API_URL) is not configured for this deployed site. Requests to localhost are disabled in production.",
+      status: 0,
+    };
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-User-Id": userId,
     ...(options?.headers as Record<string, string> || {}),
   };
 
   try {
     const res = await fetch(`${API_BASE}${endpoint}`, {
+      cache: "no-store",
+      credentials: "include",
       ...options,
       headers,
     });
@@ -163,6 +185,38 @@ export type RewardBalanceData = {
     reference_id: string;
     created_at: string;
   }>;
+};
+
+export type AdminCrowdReport = {
+  id: number;
+  destination_id: string;
+  destination_name: string;
+  user_id: string;
+  user_name: string;
+  crowd_level: string;
+  tip?: string | null;
+  moderation_status: "approved" | "pending" | "flagged" | "rejected";
+  submitted_at: string;
+  trust_weight: number;
+};
+
+export type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: "tourist" | "admin" | string;
+  created_at?: string | null;
+};
+
+export type AdminComment = {
+  id: number;
+  post_id: number;
+  post_title?: string | null;
+  user_id: string;
+  user_name: string;
+  content: string;
+  moderation_status: "approved" | "pending" | "flagged" | "rejected";
+  created_at: string;
 };
 
 export const api = {
@@ -328,6 +382,87 @@ export const api = {
     return apiRequest<PostComment>(`/posts/${postId}/comments`, {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  },
+
+  /* ---------------- Authentication (HttpOnly Session Cookies) ---------------- */
+  async signup(payload: { name: string; email: string; password: string }) {
+    return apiRequest<{ user: AuthUser }>("/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async login(payload: { email: string; password: string }) {
+    return apiRequest<{ user: AuthUser }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async logout() {
+    return apiRequest<{ success: boolean }>("/auth/logout", {
+      method: "POST",
+    });
+  },
+
+  async getMe() {
+    return apiRequest<{ user: AuthUser }>("/auth/me");
+  },
+
+  /* ---------------- Admin Moderation (Requires Server-Verified Admin Session) ---------------- */
+  async getAdminReports(statusFilter = "all") {
+    return apiRequest<{ reports: AdminCrowdReport[] }>(
+      `/admin/reports?status_filter=${encodeURIComponent(statusFilter)}`
+    );
+  },
+
+  async moderateAdminReport(
+    reportId: number,
+    status: "approved" | "rejected" | "flagged",
+    notes?: string
+  ) {
+    return apiRequest<{
+      success: boolean;
+      report_id: number;
+      old_status: string;
+      new_status: string;
+    }>(`/admin/reports/${reportId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, notes }),
+    });
+  },
+
+  async getAdminComments(statusFilter = "all") {
+    return apiRequest<{ comments: AdminComment[] }>(
+      `/admin/comments?status_filter=${encodeURIComponent(statusFilter)}`
+    );
+  },
+
+  async moderateAdminComment(
+    commentId: number,
+    status: "approved" | "rejected" | "flagged",
+    notes?: string
+  ) {
+    return apiRequest<{
+      success: boolean;
+      comment_id: number;
+      post_id: number;
+      old_status: string;
+      new_status: string;
+    }>(`/admin/comments/${commentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, notes }),
+    });
+  },
+
+  async deleteAdminComment(commentId: number) {
+    return apiRequest<{
+      success: boolean;
+      deleted_comment_id: number;
+      post_id: number;
+    }>(`/admin/comments/${commentId}`, {
+      method: "DELETE",
     });
   },
 

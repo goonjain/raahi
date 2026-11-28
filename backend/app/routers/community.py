@@ -11,6 +11,7 @@ from backend.app.schemas import (
     AccuracyVoteCreate, ReportFlagCreate, DestinationCreate, DestinationResponse
 )
 from backend.app.services.moderation import check_moderation
+from backend.app.services.auth import require_authenticated_user
 from backend.app.services.crowd_engine import (
     calculate_baseline_forecast, compute_live_crowd_adjustment, get_crowd_level_category
 )
@@ -57,10 +58,10 @@ def format_relative_time(dt: datetime.datetime, now: Optional[datetime.datetime]
 def submit_crowd_report(
     payload: CrowdReportCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
     now = datetime.datetime.now(datetime.timezone.utc)
-    user = get_or_create_user(db, x_user_id, payload.user_name)
+    user = current_user
 
     # 1. Validate destination
     dest = db.query(Destination).filter(Destination.id == payload.destination_id).first()
@@ -90,8 +91,9 @@ def submit_crowd_report(
             detail=f"Rate limit: You have already submitted a report for {dest.name}. Please wait {max(1, minutes_remaining)} minute(s) before reporting again."
         )
 
-    # 3. Content moderation check on tip
-    mod_status, mod_reason = check_moderation(payload.tip or "")
+    # 3. Content moderation check on tip; new reports default to pending until admin-verified
+    mod_check, mod_reason = check_moderation(payload.tip or "")
+    mod_status = "flagged" if mod_check == "flagged" else "pending"
 
     # 4. Snapshot forecast score
     current_hour = now.hour
@@ -315,10 +317,11 @@ def get_live_crowd(
         weather=weather or "clear"
     )
 
-    # Fetch recent reports for destination
+    # Fetch recent approved reports for destination
     stale_cutoff = now - datetime.timedelta(minutes=settings.STALE_WINDOW_MINUTES)
     recent_reports = db.query(CrowdReport).filter(
         CrowdReport.destination_id == place_id,
+        CrowdReport.moderation_status == "approved",
         CrowdReport.submitted_at >= stale_cutoff
     ).all()
 
@@ -346,9 +349,9 @@ def get_live_crowd(
 def submit_accuracy_vote(
     payload: AccuracyVoteCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id)
+    user = current_user
 
     report = db.query(CrowdReport).filter(CrowdReport.id == payload.report_id).first()
     if not report:
@@ -397,9 +400,9 @@ def flag_crowd_report(
     report_id: int,
     payload: Optional[ReportFlagCreate] = None,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id)
+    user = current_user
     report = db.query(CrowdReport).filter(CrowdReport.id == report_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Crowd report not found")
@@ -434,7 +437,7 @@ def get_destinations(
 def create_destination(
     payload: DestinationCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+    current_user: User = Depends(require_authenticated_user),
 ):
     name = payload.name.strip()
     if not name:

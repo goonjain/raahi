@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, useRef } from "react";
+import { Link } from "@tanstack/react-router";
 import { ItineraryRequest } from '@/lib/itinerary-request';
 import {
   api,
+  type AuthUser,
   type DestinationItem,
   type TravelPost,
 } from "@/lib/api";
@@ -734,6 +736,7 @@ export function Pulse({
   onFlagReport,
   destinations: propDestinations,
   onDestinationAdded,
+  currentUser = null,
 }: {
   reports: Report[];
   addReport?: (r: Omit<Report, "id" | "ago" | "user">) => void;
@@ -753,6 +756,7 @@ export function Pulse({
   onFlagReport?: (reportId: number) => Promise<void>;
   destinations?: DestinationItem[];
   onDestinationAdded?: (dest: DestinationItem) => void;
+  currentUser?: AuthUser | null;
 }) {
   const [activeTab, setActiveTab] = useState<"crowd" | "stories">("crowd");
   const [place, setPlace] = useState("hawa");
@@ -1079,6 +1083,7 @@ export function Pulse({
       }));
 
   const filteredReports = reports.filter((r) => {
+    if (r.moderation_status === "rejected" || r.moderationStatus === "rejected") return false;
     if (filterPlace === "all") return true;
     return (r.place || r.destination_id) === filterPlace;
   });
@@ -1120,6 +1125,20 @@ export function Pulse({
               <h3 className="text-2xl font-semibold">I'm here right now</h3>
               <span className="rounded-full bg-gold/20 px-2.5 py-0.5 text-xs font-bold text-foreground">Live check-in</span>
             </div>
+
+            {onSubmitReport && !currentUser && (
+              <div className="rounded-xl border border-primary/30 bg-primary/5 p-3.5 text-xs flex flex-wrap items-center justify-between gap-2">
+                <span className="text-foreground font-medium">
+                  Sign in with your Raahi account to submit crowd updates and earn verified points.
+                </span>
+                <Link
+                  to="/login"
+                  className="rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition"
+                >
+                  Sign In / Sign Up
+                </Link>
+              </div>
+            )}
 
             {feedback && (
               <div
@@ -1497,6 +1516,10 @@ export function Pulse({
                         <span className="text-[11px]">
                           {isFlagged ? (
                             <span className="text-amber-600 font-semibold">⚠️ Flagged for review</span>
+                          ) : r.moderation_status === "pending" || r.moderationStatus === "pending" ? (
+                            <span className="text-amber-600 font-medium">⏳ Pending Review</span>
+                          ) : r.moderation_status === "rejected" || r.moderationStatus === "rejected" ? (
+                            <span className="text-destructive font-medium">✕ Not publicly displayed as verified</span>
                           ) : (
                             <span className="text-emerald-700 font-medium">✓ Verified Live Observation</span>
                           )}
