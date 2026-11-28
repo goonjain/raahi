@@ -1,12 +1,11 @@
 import datetime
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import Optional
 
 from backend.app.database import get_db
-from backend.app.models import Reward
-from backend.app.routers.community import get_or_create_user
+from backend.app.models import Reward, User
+from backend.app.services.auth import require_authenticated_user
 from backend.app.schemas import RewardBalanceResponse, RewardItem
 from backend.app.config import settings
 
@@ -21,9 +20,9 @@ BADGE_DEFINITIONS = [
 @router.get("/balance", response_model=RewardBalanceResponse)
 def get_reward_balance(
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: User = Depends(require_authenticated_user),
 ):
-    user = get_or_create_user(db, x_user_id)
+    user = current_user
     now = datetime.datetime.now(datetime.timezone.utc)
 
     total_points = db.query(func.coalesce(func.sum(Reward.points), 0)).filter(

@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import hero from "@/assets/hero-jaipur.jpg";
 import { api, type DestinationItem } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 import {
   SectionTitle,
   Planner,
@@ -57,6 +58,7 @@ const NAV: [string, string][] = [
 function computeAdjustments(reps: Report[]): Record<string, number> {
   const adj: Record<string, number> = {};
   for (const r of reps) {
+    if (r.moderation_status && r.moderation_status !== "approved") continue;
     const p = r.place || r.destination_id;
     if (p && !(p in adj)) {
       const s = r.status || r.crowd_level;
@@ -67,6 +69,7 @@ function computeAdjustments(reps: Report[]): Record<string, number> {
 }
 
 function Index() {
+  const { user: currentUser, logout } = useAuth();
   const [plan, setPlan] = useState<Plan>({
     day: "Sun",
     time: "full",
@@ -144,31 +147,25 @@ function Index() {
   }, [shown]);
 
 
-  // Callback from PlannerWizard with full request – now integrates Groq recommendations
+  // Callback from PlannerWizard with full request – integrates Groq AI insights with deterministic fallback
   const handleGenerateRequest = async (req: ItineraryRequest) => {
     let preferredIds: string[] | undefined = undefined;
     let proposals: any[] = [];
     try {
-      const res = await fetch("http://127.0.0.1:8000/v1/itinerary/recommendations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json && Array.isArray(json.proposals) && json.proposals.length) {
-          proposals = json.proposals;
-          const ids = json.proposals.flatMap((p: any) => p.attraction_ids ?? []);
-          const seen = new Set<string>();
-          const validIds = ids.filter((id: string) => {
-            const ok = byId(id) && !seen.has(id);
-            if (ok) seen.add(id);
-            return ok;
-          });
-          if (validIds.length) preferredIds = validIds;
-        }
+      const res = await api.recommendItinerary(req);
+      const json = res.data;
+      if (json && Array.isArray(json.proposals) && json.proposals.length) {
+        proposals = json.proposals;
+        const ids = json.proposals.flatMap((p) => p.attraction_ids ?? []);
+        const seen = new Set<string>();
+        const validIds = ids.filter((id: string) => {
+          const ok = byId(id) && !seen.has(id);
+          if (ok) seen.add(id);
+          return ok;
+        });
+        if (validIds.length) preferredIds = validIds;
       }
-    } catch (e) {
+    } catch {
       // fallback – ignore and use deterministic generation
     }
     // Store AI proposals for UI explanations (even if empty)
@@ -310,8 +307,33 @@ function Index() {
   useEffect(() => {
     fetchDestinations();
     fetchReports();
-    fetchRewards();
-  }, []);
+
+    const handleModerationSync = (e: StorageEvent) => {
+      if (e.key === "raahi_moderation_sync_ts") {
+        fetchReports();
+        if (currentUser) fetchRewards();
+      }
+    };
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        fetchReports();
+      }
+    };
+    window.addEventListener("storage", handleModerationSync);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    return () => {
+      window.removeEventListener("storage", handleModerationSync);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser) {
+      fetchRewards();
+    }
+  }, [currentUser]);
 
   const reward = (n: number, msg = `+${n} Raahi points!`) => {
     observationsRepository.awardPoints(n);
@@ -367,35 +389,28 @@ function Index() {
     }
 
     const newReport = res.data.report as Report;
-    setCommunityReports((prev) => {
-      if (prev.some((r) => r.id === newReport.id)) return prev;
-      return [newReport, ...prev];
-    });
 
-    // Synchronize with observation repository for DoT Command Center & Live Map
-    const localLevel = payload.crowd_level === "Packed" ? "Busy" : payload.crowd_level;
-    observationsRepository.submitReport({
-      destinationId: payload.destination_id,
-      statusLevel: localLevel as "Quiet" | "Moderate" | "Busy",
-      tipText:
-        payload.tip ||
-        (payload.wait_minutes ? `Wait time: ${payload.wait_minutes} mins` : "Ground-truth observation"),
-      userAlias: payload.user_name || "You",
-    });
-
-    const shift =
-      payload.crowd_level === "Busy"
-        ? 15
-        : payload.crowd_level === "Packed"
-        ? 25
-        : payload.crowd_level === "Quiet"
-        ? -15
-        : 0;
-    setPulseAdj((a) => ({ ...a, [payload.destination_id]: shift }));
+    // Only insert into the public verified feed if already approved; pending reports await admin verification
+    if (newReport.moderation_status === "approved") {
+      setCommunityReports((prev) => {
+        if (prev.some((r) => r.id === newReport.id)) return prev;
+        return [newReport, ...prev];
+      });
+      const shift =
+        payload.crowd_level === "Busy"
+          ? 15
+          : payload.crowd_level === "Packed"
+          ? 25
+          : payload.crowd_level === "Quiet"
+          ? -15
+          : 0;
+      setPulseAdj((a) => ({ ...a, [payload.destination_id]: shift }));
+    }
 
     const successMsg =
-      res.data.message ||
-      `Check-in shared · +${res.data.points_awarded ?? 20} pts!`;
+      newReport.moderation_status === "approved"
+        ? res.data.message || `Check-in shared · +${res.data.points_awarded ?? 20} pts!`
+        : `Report #${newReport.id} submitted (Pending Review). It will appear in the Shared Community Feed once verified by an admin.`;
     setToast(successMsg);
     setTimeout(() => setToast(null), 2500);
     return { success: true, message: successMsg };
@@ -466,21 +481,52 @@ function Index() {
               </button>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-3 md:ml-0">
+          <div className="ml-auto flex items-center gap-2.5 md:ml-0">
             <span
               className="rounded-full bg-gold px-3 py-1 text-sm font-bold text-foreground shadow-sm"
               title="Your persisted Raahi reward balance"
             >
               🪙 {points} pts
             </span>
-            <Link
-              to="/admin"
-              className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1 text-xs font-semibold text-amber-400 border border-amber-500/40 hover:bg-neutral-800 transition shadow-sm"
-              title="Open Rajasthan Tourism Command Center"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-              DoT Admin
-            </Link>
+            {currentUser ? (
+              <>
+                <span
+                  className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-semibold text-secondary-foreground border border-border"
+                  title={`Signed in as ${currentUser.email}`}
+                >
+                  <span>{currentUser.name}</span>
+                  {currentUser.role === "admin" && (
+                    <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-primary">
+                      Admin
+                    </span>
+                  )}
+                </span>
+                {currentUser.role === "admin" && (
+                  <Link
+                    to="/admin"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1 text-xs font-semibold text-amber-400 border border-amber-500/40 hover:bg-neutral-800 transition shadow-sm"
+                    title="Open Rajasthan Tourism Command Center"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                    DoT Admin
+                  </Link>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  className="rounded-full border border-border bg-card px-3 py-1 text-xs font-semibold text-foreground hover:bg-secondary transition"
+                >
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <Link
+                to="/login"
+                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition shadow-sm"
+              >
+                Sign In
+              </Link>
+            )}
           </div>
         </div>
         <div className="border-bandhani" />
@@ -669,6 +715,7 @@ function Index() {
           <Pulse
             reports={communityReports}
             destinations={destinations}
+            currentUser={currentUser}
             onDestinationAdded={(newDest) => setDestinations((prev) => [...prev, newDest])}
             loading={loadingReports}
             error={reportsError}

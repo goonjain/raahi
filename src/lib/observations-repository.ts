@@ -441,10 +441,11 @@ export class ObservationsRepository {
     target.moderatedBy = moderatorName;
 
     let createdObs: VerifiedObservation | undefined;
+    const prevRelatedObsId = target.relatedObservationId;
 
     if (decision === "verify") {
-      // Create accepted observation with 90 min validity
-      const obsId = "obs-" + Date.now();
+      // Create accepted observation with 90 min validity (avoid duplicates if already verified)
+      const obsId = prevRelatedObsId || "obs-" + Date.now();
       target.relatedObservationId = obsId;
 
       const numericTarget = CROWD_CATEGORY_MAP[target.statusLevel]?.numericTarget || 50;
@@ -465,14 +466,28 @@ export class ObservationsRepository {
       };
 
       createdObs = newObs;
-      // Retain full observation history (never overwrite or wipe stale observations)
-      const allObservations = this.getAllObservations();
+      // Retain full observation history while avoiding duplicate entries for the same report
+      const allObservations = this.getAllObservations().filter(
+        (o) => o.id !== obsId && o.relatedReportId !== target.id
+      );
       allObservations.unshift(newObs);
 
       if (typeof window !== "undefined") {
         localStorage.setItem(STORAGE_KEYS.OBSERVATIONS, JSON.stringify(allObservations));
       } else {
         memoryFallback.observations = allObservations;
+      }
+    } else {
+      // Rejecting: remove any observation previously created from this report
+      target.relatedObservationId = undefined;
+      const filteredObservations = this.getAllObservations().filter(
+        (o) => o.id !== prevRelatedObsId && o.relatedReportId !== target.id
+      );
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem(STORAGE_KEYS.OBSERVATIONS, JSON.stringify(filteredObservations));
+      } else {
+        memoryFallback.observations = filteredObservations;
       }
     }
 
@@ -702,7 +717,7 @@ export class ObservationsRepository {
         }),
       });
 
-      // 2. If verified, insert into crowd_observations
+      // 2. If verified, insert into crowd_observations; if rejected, deactivate any prior observation
       if (observation) {
         await fetch(`${this.supabaseUrl}/rest/v1/crowd_observations`, {
           method: "POST",
@@ -721,6 +736,15 @@ export class ObservationsRepository {
             verified_by: observation.verifiedBy,
           }),
         });
+      } else if (report.moderationStatus === "rejected") {
+        await fetch(
+          `${this.supabaseUrl}/rest/v1/crowd_observations?related_report_id=eq.${encodeURIComponent(report.id)}`,
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ is_active: false }),
+          }
+        );
       }
     } catch (err) {
       console.warn("Failed to push moderation to Supabase:", err);

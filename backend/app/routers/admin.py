@@ -1,23 +1,22 @@
 import datetime
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, Literal
 
 from backend.app.database import get_db
-from backend.app.models import CrowdReport, GemSuggestion, Reward
+from backend.app.models import CrowdReport, GemSuggestion, PostComment, Reward
 from backend.app.config import settings
+from backend.app.services.auth import require_admin
 
-router = APIRouter(prefix="/api/admin", tags=["Admin Moderation"])
-
-def verify_admin(x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token")):
-    if not x_admin_token or x_admin_token != settings.ADMIN_SECRET_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Unauthorized: Valid admin token required."
-        )
+router = APIRouter(prefix="/api/admin", tags=["Admin Moderation"], dependencies=[Depends(require_admin)])
 
 class ModerationAction(BaseModel):
+    status: Literal["approved", "rejected", "flagged"]
+    notes: Optional[str] = None
+
+class CommentModerationAction(BaseModel):
     status: Literal["approved", "rejected", "flagged"]
     notes: Optional[str] = None
 
@@ -27,22 +26,24 @@ class GemSuggestionAction(BaseModel):
     sensitivity: Optional[Literal["normal", "fragile"]] = "normal"
     notes: Optional[str] = None
 
-@router.get("/reports", dependencies=[Depends(verify_admin)])
+@router.get("/reports")
 def get_moderation_queue(
-    status_filter: Optional[str] = "flagged",
+    status_filter: Optional[str] = "pending",
     db: Session = Depends(get_db)
 ):
     query = db.query(CrowdReport)
-    if status_filter != "all":
+    if status_filter and status_filter != "all":
         query = query.filter(CrowdReport.moderation_status == status_filter)
     
-    reports = query.order_by(CrowdReport.submitted_at.desc()).limit(50).all()
+    reports = query.order_by(CrowdReport.submitted_at.desc()).limit(100).all()
     return {
         "reports": [
             {
                 "id": r.id,
                 "destination_id": r.destination_id,
+                "destination_name": r.destination.name if r.destination else r.destination_id,
                 "user_id": r.user_id,
+                "user_name": r.user.username if r.user else r.user_id,
                 "crowd_level": r.crowd_level,
                 "tip": r.tip,
                 "moderation_status": r.moderation_status,
@@ -52,7 +53,7 @@ def get_moderation_queue(
         ]
     }
 
-@router.patch("/reports/{report_id}", dependencies=[Depends(verify_admin)])
+@router.patch("/reports/{report_id}")
 def moderate_report(
     report_id: int,
     action: ModerationAction,
@@ -109,7 +110,7 @@ def moderate_report(
         "new_status": report.moderation_status,
     }
 
-@router.get("/gem-suggestions", dependencies=[Depends(verify_admin)])
+@router.get("/gem-suggestions")
 def get_gem_suggestions_queue(
     db: Session = Depends(get_db)
 ):
@@ -133,7 +134,7 @@ def get_gem_suggestions_queue(
         ]
     }
 
-@router.patch("/gem-suggestions/{suggestion_id}", dependencies=[Depends(verify_admin)])
+@router.patch("/gem-suggestions/{suggestion_id}")
 def review_gem_suggestion(
     suggestion_id: int,
     action: GemSuggestionAction,
@@ -170,4 +171,78 @@ def review_gem_suggestion(
         "suggestion_id": suggestion.id,
         "status": suggestion.status,
         "points_awarded": settings.POINTS_FOR_GEM_APPROVAL if action.status == "approved" else 0
+    }
+
+
+@router.get("/comments")
+def get_admin_comments(
+    status_filter: Optional[str] = "all",
+    db: Session = Depends(get_db)
+):
+    query = db.query(PostComment)
+    if status_filter and status_filter != "all":
+        query = query.filter(PostComment.moderation_status == status_filter)
+
+    comments = query.order_by(PostComment.created_at.desc()).limit(100).all()
+    return {
+        "comments": [
+            {
+                "id": c.id,
+                "post_id": c.post_id,
+                "post_title": (
+                    c.post.title
+                    or (c.post.content[:60] + "..." if len(c.post.content) > 60 else c.post.content)
+                ) if c.post else None,
+                "user_id": c.user_id,
+                "user_name": c.user.username if c.user else "Traveller",
+                "content": c.content,
+                "moderation_status": c.moderation_status,
+                "created_at": c.created_at.isoformat(),
+            }
+            for c in comments
+        ]
+    }
+
+
+@router.patch("/comments/{comment_id}")
+def moderate_comment(
+    comment_id: int,
+    action: CommentModerationAction,
+    db: Session = Depends(get_db)
+):
+    comment = db.query(PostComment).filter(PostComment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    old_status = comment.moderation_status
+    comment.moderation_status = action.status
+    db.commit()
+    db.refresh(comment)
+
+    return {
+        "success": True,
+        "comment_id": comment.id,
+        "post_id": comment.post_id,
+        "old_status": old_status,
+        "new_status": comment.moderation_status,
+    }
+
+
+@router.delete("/comments/{comment_id}")
+def delete_comment(
+    comment_id: int,
+    db: Session = Depends(get_db)
+):
+    comment = db.query(PostComment).filter(PostComment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    post_id = comment.post_id
+    db.delete(comment)
+    db.commit()
+
+    return {
+        "success": True,
+        "deleted_comment_id": comment_id,
+        "post_id": post_id,
     }

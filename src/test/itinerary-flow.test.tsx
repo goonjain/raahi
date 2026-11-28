@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { BACKEND_ORIGIN } from "@/lib/api";
 import MultiDayItinerary from "@/components/musafir/MultiDayItinerary";
 import PlannerWizard from "@/components/musafir/PlannerWizard";
 import type { ItineraryRequest } from "@/lib/itinerary-request";
@@ -130,6 +131,13 @@ describe("PlannerWizard finalize", () => {
       expect(screen.getByText("Plan My Jaipur Trip")).toBeInTheDocument();
     });
     expect(onGenerate).not.toHaveBeenCalled();
+  });
+});
+
+describe("API origin resolution", () => {
+  it("derives BACKEND_ORIGIN without trailing /api", () => {
+    expect(BACKEND_ORIGIN).not.toMatch(/\/api\/?$/);
+    expect(`${BACKEND_ORIGIN}/v1/itinerary/recommendations`).toMatch(/^https?:\/\/.+\/v1\/itinerary\/recommendations$/);
   });
 });
 

@@ -114,6 +114,29 @@ describe("Raahi Observations Repository & Moderation Lifecycle", () => {
     expect(activeObservations.length).toBe(initialActiveCount);
   });
 
+  it("rejects previously verified report, removes its active observation, and persists across reload", () => {
+    const submission = repo.submitReport({
+      destinationId: "nahargarh",
+      statusLevel: "Busy",
+      tipText: "Sunset point is packed right now",
+    });
+    const reportId = submission.report!.id;
+
+    // 1. Verify first -> creates active observation
+    expect(repo.moderateReport(reportId, "verify", "DoT Inspector").success).toBe(true);
+    expect(repo.getActiveObservations().some((o) => o.relatedReportId === reportId)).toBe(true);
+
+    // 2. Reject previously verified report -> removes observation
+    expect(repo.moderateReport(reportId, "reject", "DoT Inspector").success).toBe(true);
+    expect(repo.getActiveObservations().some((o) => o.relatedReportId === reportId)).toBe(false);
+
+    // 3. Reload repository -> rejected status and removed observation persist
+    const reloadedRepo = new ObservationsRepository();
+    const persisted = reloadedRepo.getReports("all").find((r) => r.id === reportId);
+    expect(persisted?.moderationStatus).toBe("rejected");
+    expect(reloadedRepo.getActiveObservations().some((o) => o.relatedReportId === reportId)).toBe(false);
+  });
+
   it("persists admin overrides and emergency broadcasts across requests", () => {
     repo.setAdminOverride("amber", -15);
     expect(repo.getAdminOverrides()["amber"]).toBe(-15);

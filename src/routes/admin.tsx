@@ -1,8 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { PLACES, type Place, level } from "@/lib/jaipur-data";
 import { predictCrowd, type VerifiedObservation } from "@/lib/crowd-service";
 import { observationsRepository, type CrowdReportRecord } from "@/lib/observations-repository";
+import { api, API_BASE, type AdminComment, type AdminCrowdReport } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 import {
   Users,
   AlertTriangle,
@@ -30,6 +32,9 @@ import {
   Scale,
   CheckCircle,
   FileText,
+  Trash2,
+  MessageSquare,
+  KeyRound,
 } from "lucide-react";
 import { formatIstDate } from "@/lib/ml-pipeline";
 import {
@@ -96,7 +101,7 @@ const ZONE_DATA = [
   { name: "Outer Arts (Patrika, Sanganer)", value: 11, color: "#d4af37" },
 ];
 
-function AdminDashboard() {
+export function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<
     "overview" | "sites" | "incidents" | "broadcast" | "ml-readiness"
   >("overview");
@@ -121,6 +126,32 @@ function AdminDashboard() {
   const [activeBroadcast, setActiveBroadcast] = useState<string | null>(() =>
     observationsRepository.getActiveBroadcast(),
   );
+
+  // Server-verified admin session state
+  const { user: authUser, loading: authLoading, logout } = useAuth();
+  const navigate = useNavigate();
+  const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
+  const [backendReports, setBackendReports] = useState<AdminCrowdReport[]>([]);
+  const [backendComments, setBackendComments] = useState<AdminComment[]>([]);
+  const [reportStatusFilter, setReportStatusFilter] = useState<
+    "pending" | "approved" | "rejected" | "flagged" | "all"
+  >("pending");
+  const [commentStatusFilter, setCommentStatusFilter] = useState<
+    "all" | "pending" | "flagged" | "approved" | "rejected"
+  >("all");
+  const [moderationLoading, setModerationLoading] = useState<boolean>(false);
+  const [moderationFeedback, setModerationFeedback] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [pendingDeleteComment, setPendingDeleteComment] = useState<AdminComment | null>(null);
+  const [deletingCommentId, setDeletingCommentId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!authLoading && !authUser) {
+      void navigate({ to: "/login", search: { redirect: "/admin" } as any });
+    }
+  }, [authLoading, authUser, navigate]);
 
   // Sync with persistent repository
   useEffect(() => {
@@ -230,6 +261,140 @@ function AdminDashboard() {
     observationsRepository.moderateReport(reportId, "reject", "DoT Command Officer");
   };
 
+  const loadBackendModeration = async (
+    cFilter: "all" | "pending" | "flagged" | "approved" | "rejected" = commentStatusFilter,
+    rFilter: "pending" | "approved" | "rejected" | "flagged" | "all" = reportStatusFilter,
+  ) => {
+    if (!authUser || authUser.role !== "admin") {
+      setBackendReports([]);
+      setBackendComments([]);
+      return;
+    }
+    setModerationLoading(true);
+    setAdminAuthError(null);
+    const [repRes, comRes] = await Promise.all([
+      api.getAdminReports(rFilter),
+      api.getAdminComments(cFilter),
+    ]);
+    setModerationLoading(false);
+
+    if (repRes.status === 403 || repRes.status === 401 || comRes.status === 403 || comRes.status === 401) {
+      setAdminAuthError(repRes.error || comRes.error || "Unauthorized: Administrator session required.");
+      return;
+    }
+
+    const errors: string[] = [];
+    if (repRes.error) {
+      errors.push(`Reports: ${repRes.error}`);
+    } else {
+      setBackendReports(repRes.data?.reports || []);
+    }
+
+    if (comRes.error) {
+      errors.push(`Comments: ${comRes.error}`);
+    } else {
+      setBackendComments(comRes.data?.comments || []);
+    }
+
+    if (errors.length > 0) {
+      setAdminAuthError(errors.join(" | "));
+    }
+  };
+
+  useEffect(() => {
+    if (authUser?.role === "admin") {
+      void loadBackendModeration(commentStatusFilter, reportStatusFilter);
+    }
+  }, [authUser, commentStatusFilter, reportStatusFilter]);
+
+  const handleVerifyBackendReport = async (reportId: number) => {
+    setModerationFeedback(null);
+    const res = await api.moderateAdminReport(reportId, "approved");
+    if (res.error) {
+      setModerationFeedback({ type: "error", text: res.error });
+      return;
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem("raahi_moderation_sync_ts", String(Date.now()));
+    }
+    setModerationFeedback({ type: "success", text: `Report #${reportId} verified and published.` });
+    await loadBackendModeration(commentStatusFilter, reportStatusFilter);
+  };
+
+  const handleRejectBackendReport = async (reportId: number) => {
+    setModerationFeedback(null);
+    const res = await api.moderateAdminReport(reportId, "rejected");
+    if (res.error) {
+      setModerationFeedback({ type: "error", text: res.error });
+      return;
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem("raahi_moderation_sync_ts", String(Date.now()));
+    }
+    setModerationFeedback({ type: "success", text: `Report #${reportId} rejected and hidden from public feed.` });
+    await loadBackendModeration(commentStatusFilter, reportStatusFilter);
+  };
+
+  const handleVerifyBackendComment = async (commentId: number) => {
+    setModerationFeedback(null);
+    const res = await api.moderateAdminComment(commentId, "approved");
+    if (res.error) {
+      setModerationFeedback({ type: "error", text: res.error });
+      return;
+    }
+    setBackendComments((prev) =>
+      prev
+        .map((c) => (c.id === commentId ? { ...c, moderation_status: "approved" as const } : c))
+        .filter((c) => commentStatusFilter === "all" || c.moderation_status === commentStatusFilter),
+    );
+    setModerationFeedback({ type: "success", text: `Comment #${commentId} verified and visible in public feed.` });
+  };
+
+  const handleRejectBackendComment = async (commentId: number) => {
+    setModerationFeedback(null);
+    const res = await api.moderateAdminComment(commentId, "rejected");
+    if (res.error) {
+      setModerationFeedback({ type: "error", text: res.error });
+      return;
+    }
+    setBackendComments((prev) =>
+      prev
+        .map((c) => (c.id === commentId ? { ...c, moderation_status: "rejected" as const } : c))
+        .filter((c) => commentStatusFilter === "all" || c.moderation_status === commentStatusFilter),
+    );
+    setModerationFeedback({ type: "success", text: `Comment #${commentId} rejected and excluded from public feed.` });
+  };
+
+  const handleConfirmDeleteComment = async () => {
+    if (!pendingDeleteComment) return;
+    const targetId = pendingDeleteComment.id;
+    setDeletingCommentId(targetId);
+    setModerationFeedback(null);
+
+    const res = await api.deleteAdminComment(targetId);
+    setDeletingCommentId(null);
+    setPendingDeleteComment(null);
+
+    if (res.error) {
+      if (res.status === 404) {
+        setBackendComments((prev) => prev.filter((c) => c.id !== targetId));
+        setModerationFeedback({
+          type: "error",
+          text: `Comment #${targetId} was already removed or no longer exists.`,
+        });
+      } else {
+        setModerationFeedback({ type: "error", text: res.error });
+      }
+      return;
+    }
+
+    setBackendComments((prev) => prev.filter((c) => c.id !== targetId));
+    setModerationFeedback({
+      type: "success",
+      text: `Comment #${targetId} permanently deleted. Parent post preserved.`,
+    });
+  };
+
   const handleVerifyIncident = (incId: string) => {
     setIncidents((prev) =>
       prev.map((inc) => (inc.id === incId ? { ...inc, verified: !inc.verified } : inc)),
@@ -264,6 +429,75 @@ function AdminDashboard() {
     const matchesLevel = filterLevel === "all" || lvl.toLowerCase() === filterLevel.toLowerCase();
     return matchesSearch && matchesLevel;
   });
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-6">
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6 text-center space-y-2 max-w-sm w-full">
+          <RefreshCw className="w-6 h-6 text-amber-400 animate-spin mx-auto" />
+          <p className="text-sm font-semibold">Verifying Raahi administrator session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-6">
+        <div className="rounded-xl border border-amber-500/30 bg-neutral-900 p-6 text-center space-y-4 max-w-md w-full">
+          <KeyRound className="w-8 h-8 text-amber-400 mx-auto" />
+          <h1 className="text-lg font-bold">Administrator Sign-In Required</h1>
+          <p className="text-xs text-neutral-400">
+            Please sign in with a server-provisioned administrator account to access the Raahi Command Center.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Link
+              to="/login"
+              search={{ redirect: "/admin" } as any}
+              className="px-4 py-2 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-neutral-950 transition"
+            >
+              Sign In
+            </Link>
+            <Link
+              to="/"
+              className="px-4 py-2 rounded-lg text-xs font-semibold border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition"
+            >
+              Return Home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authUser.role !== "admin") {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-6">
+        <div className="rounded-xl border border-red-800/60 bg-neutral-900 p-6 text-center space-y-4 max-w-md w-full">
+          <ShieldAlert className="w-8 h-8 text-red-400 mx-auto" />
+          <h1 className="text-lg font-bold text-red-300">403 Forbidden — Administrator Access Required</h1>
+          <p className="text-xs text-neutral-400">
+            Signed in as <strong className="text-neutral-200">{authUser.email}</strong> ({authUser.role}). Only administrator accounts can access the moderation command center.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Link
+              to="/"
+              className="px-4 py-2 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-neutral-950 transition"
+            >
+              Return to Tourist App
+            </Link>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="px-4 py-2 rounded-lg text-xs font-semibold border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans">
@@ -807,12 +1041,274 @@ function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Tourist Pulse Reports (Live from Public App) */}
-              <div className="space-y-3">
-                <div className="text-xs font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1.5 pt-2">
-                  <Activity className="w-3.5 h-3.5" />
-                  Live Traveler Check-In Reports ({reports.length})
+              {/* Authoritative Backend Moderation Queue (Crowd Reports + Community Comments) */}
+              <div className="space-y-4">
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                      <Database className="w-3.5 h-3.5" />
+                      Authoritative Database Moderation Queue
+                      {API_BASE && (
+                        <span className="ml-2 text-[10px] font-mono font-normal lowercase text-neutral-400">
+                          ({API_BASE})
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                        <Lock className="w-3 h-3" />
+                        Server-Verified Admin ({authUser.email})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void loadBackendModeration(commentStatusFilter, reportStatusFilter)}
+                        disabled={moderationLoading}
+                        className="px-2 py-1 rounded text-[11px] bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 flex items-center gap-1 transition"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${moderationLoading ? "animate-spin" : ""}`} />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                      {adminAuthError && (
+                        <div className="text-xs px-3 py-2 rounded-lg border bg-red-950/40 border-red-800/60 text-red-300">
+                          {adminAuthError}
+                        </div>
+                      )}
+                      {moderationFeedback && (
+                        <div
+                          className={`text-xs px-3 py-2 rounded-lg border ${
+                            moderationFeedback.type === "success"
+                              ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-300"
+                              : "bg-red-950/40 border-red-800/60 text-red-300"
+                          }`}
+                        >
+                          {moderationFeedback.text}
+                        </div>
+                      )}
+
+                      {/* Backend Crowd Reports Queue */}
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-300">
+                            Database Crowd Reports ({backendReports.length})
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {(["pending", "approved", "rejected", "flagged", "all"] as const).map((st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                onClick={() => setReportStatusFilter(st)}
+                                className={`px-2 py-0.5 rounded text-[11px] capitalize border transition ${
+                                  reportStatusFilter === st
+                                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                    : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-neutral-200"
+                                }`}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {backendReports.length === 0 ? (
+                          <div className="p-4 rounded-xl border border-dashed border-neutral-800 text-center text-xs text-neutral-400">
+                            No {reportStatusFilter === "all" ? "" : reportStatusFilter} crowd reports in the backend database.
+                          </div>
+                        ) : (
+                          backendReports.map((r) => (
+                            <div
+                              key={`be-rep-${r.id}`}
+                              className={`p-3.5 rounded-xl border transition ${
+                                r.moderation_status === "approved"
+                                  ? "bg-neutral-950/70 border-emerald-900/50"
+                                  : r.moderation_status === "rejected"
+                                    ? "bg-neutral-950/70 border-red-900/50 opacity-70"
+                                    : "bg-amber-950/20 border-amber-500/40"
+                              }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-mono text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                                      #{r.id}
+                                    </span>
+                                    <span className="font-semibold text-white text-xs">
+                                      {r.destination_name}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-neutral-800 text-neutral-200">
+                                      {r.crowd_level}
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                                        r.moderation_status === "approved"
+                                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                          : r.moderation_status === "rejected"
+                                            ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                                            : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                                      }`}
+                                    >
+                                      {r.moderation_status}
+                                    </span>
+                                  </div>
+                                  {r.tip ? (
+                                    <p className="text-xs text-neutral-200 italic">"{r.tip}"</p>
+                                  ) : (
+                                    <p className="text-[11px] text-neutral-500 italic">No description provided</p>
+                                  )}
+                                  <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+                                    <span>
+                                      Author: <strong className="text-neutral-300">{r.user_name}</strong>
+                                    </span>
+                                    <span>•</span>
+                                    <span>{new Date(r.submitted_at).toLocaleString()}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {r.moderation_status !== "approved" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVerifyBackendReport(r.id)}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 transition"
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      Verify
+                                    </button>
+                                  )}
+                                  {r.moderation_status !== "rejected" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRejectBackendReport(r.id)}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-red-950/80 text-neutral-300 hover:text-red-300 border border-neutral-700 hover:border-red-800/60 flex items-center gap-1 transition"
+                                    >
+                                      <XCircle className="w-3.5 h-3.5" />
+                                      Reject
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Community Comments Queue */}
+                      <div className="space-y-2 pt-2 border-t border-neutral-800/80">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-300 flex items-center gap-1.5">
+                            <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
+                            Community Comments ({backendComments.length})
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {(["all", "pending", "flagged", "approved", "rejected"] as const).map((st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                onClick={() => setCommentStatusFilter(st)}
+                                className={`px-2 py-0.5 rounded text-[11px] capitalize border transition ${
+                                  commentStatusFilter === st
+                                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                    : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-neutral-200"
+                                }`}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {backendComments.length === 0 ? (
+                          <div className="p-4 rounded-xl border border-dashed border-neutral-800 text-center text-xs text-neutral-400">
+                            No community comments match the selected filter.
+                          </div>
+                        ) : (
+                          backendComments.map((c) => (
+                            <div
+                              key={`comment-${c.id}`}
+                              className={`p-3.5 rounded-xl border transition ${
+                                c.moderation_status === "approved"
+                                  ? "bg-neutral-950/70 border-emerald-900/50"
+                                  : c.moderation_status === "rejected"
+                                    ? "bg-neutral-950/70 border-red-900/50 opacity-75"
+                                    : "bg-amber-950/20 border-amber-500/40"
+                              }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                                <div className="space-y-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold text-white text-xs">
+                                      {c.user_name}
+                                    </span>
+                                    <span className="text-[11px] text-neutral-400 truncate">
+                                      on Post #{c.post_id}
+                                      {c.post_title ? `: "${c.post_title}"` : ""}
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                                        c.moderation_status === "approved"
+                                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                          : c.moderation_status === "rejected"
+                                            ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                                            : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                                      }`}
+                                    >
+                                      {c.moderation_status}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-neutral-200">{c.content}</p>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {c.moderation_status !== "approved" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVerifyBackendComment(c.id)}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 transition"
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      Verify
+                                    </button>
+                                  )}
+                                  {c.moderation_status !== "rejected" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRejectBackendComment(c.id)}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-red-950/80 text-neutral-300 hover:text-red-300 border border-neutral-700 hover:border-red-800/60 flex items-center gap-1 transition"
+                                    >
+                                      <XCircle className="w-3.5 h-3.5" />
+                                      Reject
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setPendingDeleteComment(c)}
+                                    disabled={deletingCommentId === c.id}
+                                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800/60 flex items-center gap-1 transition disabled:opacity-50"
+                                    title="Permanently delete this comment"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
                 </div>
+
+                {/* Demo-Only Local Observation Queue (Separate from Shared Backend) */}
+                <div className="pt-4 border-t border-neutral-800 space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-neutral-400 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5" />
+                    Demo-Only Local Observation Queue ({reports.length})
+                  </div>
+                  <p className="text-[11px] text-neutral-500">
+                    Browser-local demo records for offline ML/map simulation only — not connected to the shared community database.
+                  </p>
 
                 {reports.map((r) => (
                   <div
@@ -901,6 +1397,55 @@ function AdminDashboard() {
                     </div>
                   </div>
                 ))}
+                </div>
+
+                {/* Delete Comment Confirmation Dialog */}
+                {pendingDeleteComment && (
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="delete-comment-dialog-title"
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+                  >
+                    <div className="w-full max-w-md rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-xl space-y-4">
+                      <div className="space-y-1">
+                        <h4
+                          id="delete-comment-dialog-title"
+                          className="text-sm font-semibold text-white flex items-center gap-2"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-400" />
+                          Delete Community Comment?
+                        </h4>
+                        <p className="text-xs text-neutral-400">
+                          This permanently deletes comment #{pendingDeleteComment.id} by{" "}
+                          <strong className="text-neutral-200">{pendingDeleteComment.user_name}</strong>{" "}
+                          (status: {pendingDeleteComment.moderation_status}). The parent post #{pendingDeleteComment.post_id} will be preserved.
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-300 italic">
+                        "{pendingDeleteComment.content}"
+                      </div>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPendingDeleteComment(null)}
+                          disabled={deletingCommentId !== null}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 transition"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleConfirmDeleteComment}
+                          disabled={deletingCommentId !== null}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition disabled:opacity-60"
+                        >
+                          {deletingCommentId !== null ? "Deleting..." : "Confirm Delete"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="text-xs font-semibold uppercase tracking-wider text-neutral-400 flex items-center gap-1.5 pt-4 border-t border-neutral-800">
                   <ShieldAlert className="w-3.5 h-3.5" />
